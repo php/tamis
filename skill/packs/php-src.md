@@ -19,7 +19,7 @@ A memory violation that needs malicious error handlers, destructors, `__toString
 
 - A crash or assertion that only fires on a debug build is a bug, not a security issue.
 - `run-tests.php --asan` sets `USE_ZEND_ALLOC=0`, so a report detected under AddressSanitizer with it is a standard reproduction. Only a bug that the Zend allocator prevents, and that therefore needs `USE_ZEND_ALLOC=0` to happen at all, falls under the non-standard environment variables.
-- php-src bundles libraries from other projects, such as lexbor in `ext/lexbor/lexbor`, libgd in `ext/gd/libgd`, libmagic in `ext/fileinfo/libmagic`, uriparser in `ext/uri/uriparser`, PCRE2 in `ext/pcre/pcre2lib` and timelib in `ext/date/lib`. A bug there is upstream: name the library and check that php-src reaches the faulty code at all.
+- php-src bundles libraries from other projects, such as lexbor in `ext/lexbor/lexbor`, libgd in `ext/gd/libgd`, libmagic in `ext/fileinfo/libmagic`, uriparser in `ext/uri/uriparser`, PCRE2 in `ext/pcre/pcre2lib` and timelib in `ext/date/lib`. libmbfl in `ext/mbstring/libmbfl` is php-src's own code, since php-src maintains it in its tree. A bug in a bundled library is upstream: name the library and check that php-src reaches the faulty code at all.
 
 ### Calibration
 
