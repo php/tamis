@@ -17,12 +17,12 @@ A memory violation that needs malicious error handlers, destructors, `__toString
 
 ### Checks before scoring
 
-- Compare the faulty code on the source references. When only the development branch holds it, it is present only in an unstable branch.
-- A crash or assertion that only fires on a debug build is a bug, not a security issue. A report under AddressSanitizer with the Zend allocator on is not a non-standard build, while one that needs `USE_ZEND_ALLOC=0` is.
-- php-src bundles lexbor in `ext/lexbor/lexbor`, libgd in `ext/gd/libgd`, PCRE2 in `ext/pcre/pcre2lib` and timelib in `ext/date/lib`. A bug there is upstream: name the library and check that php-src reaches the faulty code at all.
+- A crash or assertion that only fires on a debug build is a bug, not a security issue.
+- `run-tests.php --asan` sets `USE_ZEND_ALLOC=0`, so a report detected under AddressSanitizer with it is a standard reproduction. Only a bug that the Zend allocator prevents, and that therefore needs `USE_ZEND_ALLOC=0` to happen at all, falls under the non-standard environment variables.
+- php-src bundles libraries from other projects, such as lexbor in `ext/lexbor/lexbor`, libgd in `ext/gd/libgd`, libmagic in `ext/fileinfo/libmagic`, uriparser in `ext/uri/uriparser`, PCRE2 in `ext/pcre/pcre2lib` and timelib in `ext/date/lib`. A bug there is upstream: name the library and check that php-src reaches the faulty code at all.
 
 ### Calibration
 
-A crash is low, even when remote data triggers it, unless the report shows a leak, a write or code execution beyond it. Medium is the usual level for a real bug with more impact than a crash. High needs a demonstrated code execution or data exposure, or a denial of service on a default configuration of a common extension. Critical is rare.
+A crash is low, even when remote data triggers it, unless the report shows a leak, a write or code execution beyond it. Medium is the usual level for a real bug with more impact than a crash. High needs a demonstrated code execution or data exposure, or requests that hang or exhaust a default configuration of a common extension, which a crashed worker does not. Critical is rare.
 
 The team's CVSS 4.0 vectors carry `AT:P`. A crash from remote data is `AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N`, with low availability because FPM replaces the crashed worker. CVSS rates that vector medium, while the team rates the crash low. Exploitation that needs heap shaping is `AC:H`. A hang or unbounded CPU use from a request is `VA:H`.

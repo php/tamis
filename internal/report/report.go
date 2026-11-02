@@ -401,13 +401,9 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	}
 	r.CWE = cwes
 
-	// The severity rates the vector, so it goes with it.
 	if r.CVSS.Vector != "" && !cvss4.MatchString(r.CVSS.Vector) {
-		r.CVSS, r.Severity = CVSS{}, ""
+		r.CVSS = CVSS{}
 		r.Removed++
-	}
-	if r.CVSS.Vector == "" {
-		r.Severity = ""
 	}
 	// The trailing slash only matches a directory, and cluePath keeps git pathspec magic out.
 	if dir := r.Component; dir != "" && (!cluePath.MatchString(dir) || path.Clean(dir) != dir || strings.HasPrefix(dir, ".") || !c.Code.Exists(dir+"/")) {
@@ -514,7 +510,7 @@ func RenderPrivate(r Report) string {
 	}
 	b.WriteString(text(r.Summary) + "\n")
 	if r.Upstream != "" {
-		fmt.Fprintf(&b, "\nThe faulty code is bundled from `%s`, so the fix belongs upstream.\n", r.Upstream)
+		fmt.Fprintf(&b, "\nThe faulty code seems to come from `%s`, which the repository bundles, so the fix may belong upstream.\n", r.Upstream)
 	}
 
 	b.WriteString("\n#### Possible duplicates\n\n")

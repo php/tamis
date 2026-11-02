@@ -1418,17 +1418,18 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 }
 
 func TestRunPutsTheUpstreamProjectOnTheBoard(t *testing.T) {
-	for name, tc := range map[string]struct{ upstream, want string }{
-		"bundled":      {"lexbor", "lexbor"},
-		"own code":     {"", ""},
-		"not a name":   {"[lexbor](https://example.com)", ""},
-		"code mention": {"`lexbor`", ""},
+	for name, tc := range map[string]struct{ path, upstream, want string }{
+		"bundled":      {"ext/foo/foo.c", "lexbor", "lexbor"},
+		"own code":     {"ext/foo/foo.c", "", ""},
+		"not a name":   {"ext/foo/foo.c", "[lexbor](https://example.com)", ""},
+		"code mention": {"ext/foo/foo.c", "`lexbor`", ""},
+		"not located":  {"ext/foo/missing.c", "lexbor", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := newFixture()
-			eng := &fakeEngine{comparator: `{"duplicates":[]}`, reader: `{"summary":"s","location":{"path":"ext/foo/foo.c","symbol":"php_foo","line":42},"upstream":` + strconv.Quote(tc.upstream) + `}`}
+			eng := &fakeEngine{comparator: `{"duplicates":[]}`, reader: `{"summary":"s","location":{"path":` + strconv.Quote(tc.path) + `,"symbol":"php_foo","line":42},"upstream":` + strconv.Quote(tc.upstream) + `}`}
 
-			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16"}, gh, eng))
 
 			require.Equal(t, tc.want, gh.Value(gh.Find("GHSA-new"), "Upstream"))
 		})

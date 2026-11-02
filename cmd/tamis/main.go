@@ -105,10 +105,8 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	if *provider != "claude" && *provider != "openai" {
 		return fmt.Errorf("unknown engine %q, expected claude or openai", *provider)
 	}
-	for _, name := range strings.Fields(*packs) {
-		if _, err := skill.Pack(name); err != nil {
-			return err
-		}
+	if _, err := skill.Packs(strings.Fields(*packs)); err != nil {
+		return err
 	}
 	token, apiKey := os.Getenv("GH_TOKEN"), os.Getenv("LLM_API_KEY")
 	if token == "" || apiKey == "" {
