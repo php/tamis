@@ -36,6 +36,16 @@ TAMIS_TEST_IMAGE=tamis-test:codex go test -race -count=1 -tags integration ./int
 
 Repeat with `claude`. The tests use fake model servers, check direct host, Internet and DNS access, and confirm the pinned CLI reaches the filtered proxy. The suite fails without Docker or with `TAMIS_TEST_IMAGE` unset.
 
+## Evals
+
+The evals run the real triage, sandboxed agent and model included, on made-up reports about `libmini`, a small C library in `internal/triage/testdata/evals`. Each scenario checks the location, the CWE, the policy exclusions and the duplicates the models propose, and that a prompt injection does not leak another advisory into the comment. They spend real model requests, so they only run with the `evals` tag, Docker and a key:
+
+```bash
+ENGINE=claude LLM_API_KEY="$ANTHROPIC_API_KEY" go test -tags evals -count=1 -timeout 1h -run TestEvals ./internal/triage
+```
+
+They read `ENGINE`, `MODEL`, `LLM_API_KEY` and `RUNNER_IMAGE` like a production run, and a Codex access token needs `MODEL`. Models are not deterministic, so compare two prompts over several runs with `-count`. To add a scenario, write its report in `testdata/evals/reports/` and add its expectations to `evalScenarios`.
+
 ## Agent images
 
 [`docker/agent/Dockerfile`](../docker/agent/Dockerfile) builds the agent images, one target per agent:
