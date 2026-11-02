@@ -94,13 +94,13 @@ func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow in foo", HTMLURL: "https://x/GHSA-new", State: "triage", CreatedAt: reported}
 
 	require.NoError(t, b.Put(t.Context(), a, Duplicate, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Excluded: true}, "first comment"))
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "critical", Located: true, Component: "ext/foo"}, "second comment"))
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "critical", Located: true, Component: "ext/foo", Upstream: "lexbor"}, "second comment"))
 
 	require.Len(t, p.Items, 1, "a second put created another item")
 	id := p.Find("GHSA-new")
 	require.Equal(t, "Overflow in foo", p.Titles[id])
 	require.Equal(t, "https://x/GHSA-new\n\nsecond comment", p.Bodies[id], "the draft body misses the latest comment")
-	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Original report": ""}, values(p, id))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Upstream": "lexbor", "Original report": ""}, values(p, id))
 }
 
 func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
@@ -140,7 +140,7 @@ func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
 
-	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Original report": "GHSA-old"}, values(p, old))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Upstream": "", "Original report": "GHSA-old"}, values(p, old))
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"), "the duplicate of a settled report changed priority")
 	require.Equal(t, "closed", p.Value(other, "State"))
 	require.Equal(t, "triage", p.Value(gone, "State"), "an advisory missing from the list changed state")
@@ -163,7 +163,7 @@ func TestSyncReportsFailedWrites(t *testing.T) {
 
 func values(p *boardtest.Project, id int64) map[string]string {
 	v := map[string]string{}
-	for _, f := range []string{"GHSA", "Reported", "State", "Priority", "Severity", "Duplicate of", "Duplicates", "Policy exclusion", "Located", "Component", "Original report"} {
+	for _, f := range []string{"GHSA", "Reported", "State", "Priority", "Severity", "Duplicate of", "Duplicates", "Policy exclusion", "Located", "Component", "Upstream", "Original report"} {
 		v[f] = p.Value(id, f)
 	}
 
@@ -276,11 +276,11 @@ func TestPutClearsTheTriageOfAStatus(t *testing.T) {
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", State: "triage"}
 
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Located: true, Component: "ext/foo"}, ""))
+	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Located: true, Component: "ext/foo", Upstream: "lexbor"}, ""))
 	require.NoError(t, b.Put(t.Context(), a, AnalysisFailed, nil, "note"))
 
 	id := p.Find("GHSA-new")
-	for _, f := range []string{"Severity", "Duplicate of", "Policy exclusion", "Located", "Component"} {
+	for _, f := range []string{"Severity", "Duplicate of", "Policy exclusion", "Located", "Component", "Upstream"} {
 		require.Empty(t, p.Value(id, f), "%s outlived the triage", f)
 	}
 }
@@ -320,6 +320,7 @@ func TestTriageOfNamesTheComponentOfTheFaultyStatement(t *testing.T) {
 	}
 	require.Empty(t, TriageOf(report.Report{Location: report.Location{Path: "ext/pgsql/pgsql.c"}}).Component, "an unlocated statement got a component")
 	require.Equal(t, "sapi/fpm", TriageOf(report.Report{Component: "sapi/fpm", Location: report.Location{Path: "main/fastcgi.c"}, Located: true}).Component, "the component the model named lost to the path")
+	require.Equal(t, "lexbor", TriageOf(report.Report{Upstream: "lexbor"}).Upstream)
 }
 
 func TestSyncGroupsEveryReportUnderItsOldest(t *testing.T) {
@@ -779,7 +780,7 @@ func TestCreateLaysOutTheProjectOpenExpects(t *testing.T) {
 	require.Equal(t, []github.ProjectView{{
 		Name:   "Triage",
 		Filter: "State:triage,draft",
-		Fields: []int64{100, 105, 106, 110, 103, 104},
+		Fields: []int64{100, 105, 106, 110, 111, 103, 104},
 		SortBy: []int64{105, 104},
 	}}, p.Views)
 	require.Equal(t, []string{"PVTV_default"}, p.Deleted)

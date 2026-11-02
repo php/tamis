@@ -39,6 +39,7 @@ const (
 	fieldExcluded    = "Policy exclusion"
 	fieldLocated     = "Located"
 	fieldComponent   = "Component"
+	fieldUpstream    = "Upstream"
 	fieldGroup       = "Original report"
 	fieldAttempts    = "Attempts"
 )
@@ -58,6 +59,7 @@ var layout = []struct {
 	{fieldExcluded, "single_select", []string{"Yes", "No"}},
 	{fieldLocated, "single_select", []string{"Yes", "No"}},
 	{fieldComponent, "text", nil},
+	{fieldUpstream, "text", nil},
 	{fieldGroup, "text", nil},
 	{fieldAttempts, "number", nil},
 }
@@ -103,7 +105,7 @@ func Create(ctx context.Context, gh Creator, org, title string) (string, error) 
 	triage := github.ProjectView{
 		Name:   "Triage",
 		Filter: "State:triage,draft",
-		Fields: []int64{ids["Title"], ids[fieldPriority], ids[fieldSeverity], ids[fieldComponent], ids[fieldDuplicates], ids[fieldReported]},
+		Fields: []int64{ids["Title"], ids[fieldPriority], ids[fieldSeverity], ids[fieldComponent], ids[fieldUpstream], ids[fieldDuplicates], ids[fieldReported]},
 		SortBy: []int64{ids[fieldPriority], ids[fieldReported]},
 	}
 	if err := gh.CreateProjectView(ctx, org, number, triage); err != nil {
@@ -181,6 +183,8 @@ type Triage struct {
 	Excluded, Located     bool
 	// Component is the directory the model named, else the one of the located faulty statement, two levels deep.
 	Component string
+	// Upstream is the project the faulty code is bundled from, empty when it is the repository's own.
+	Upstream string
 }
 
 // Open loads the fields and items of project, given as "org/number". With issues set, new items are issues of
@@ -347,7 +351,7 @@ func (b *Board) Has(ghsa string) bool {
 // TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the comment shows.
 func TriageOf(r report.Report) Triage {
 	t := Triage{Severity: r.Severity, Excluded: len(r.PolicyExclusions) > 0, Located: r.Located}
-	t.Component = r.Component
+	t.Component, t.Upstream = r.Component, r.Upstream
 	if dir := path.Dir(r.Location.Path); t.Component == "" && r.Located && dir != "." {
 		parts := strings.Split(dir, "/")
 		t.Component = strings.Join(parts[:min(len(parts), 2)], "/")
@@ -478,6 +482,7 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		b.option(fieldExcluded, excluded),
 		b.option(fieldLocated, located),
 		{ID: b.ids[fieldComponent], Value: text(kept.Component)},
+		{ID: b.ids[fieldUpstream], Value: text(kept.Upstream)},
 		{ID: b.ids[fieldAttempts], Value: numberValue(attempts)},
 	}
 	if err := b.gh.UpdateProjectItem(ctx, b.org, b.number, it.id, values); err != nil {

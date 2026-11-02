@@ -341,6 +341,30 @@ func TestRenderPolicyPointEndingWithAPeriod(t *testing.T) {
 	assert.NotContains(t, got, ".:")
 }
 
+func TestRenderNamesTheUpstreamProject(t *testing.T) {
+	assert.Contains(t, Render(Report{Summary: "Overflow in the tokenizer.", Upstream: "lexbor"}), "Overflow in the tokenizer.\n\nThe faulty code is bundled from `lexbor`, so the fix belongs upstream.\n")
+	assert.NotContains(t, Render(Report{Summary: "Overflow in the tokenizer."}), "upstream")
+}
+
+func TestVerifyKeepsOnlyAProjectNameAsUpstream(t *testing.T) {
+	for upstream, kept := range map[string]bool{
+		"lexbor":                 true,
+		"pcre2":                  true,
+		"libxml2.9":              true,
+		"":                       false,
+		"lex bor":                false,
+		"`lexbor`":               false,
+		"@lexbor":                false,
+		"../lexbor":              false,
+		"[lexbor](https://x.io)": false,
+		strings.Repeat("a", 65):  false,
+	} {
+		r := Report{Upstream: upstream}
+		require.NoError(t, checker(t).Verify(context.Background(), &r))
+		require.Equal(t, kept, r.Upstream != "", "%q", upstream)
+	}
+}
+
 func TestRenderFailedDuplicateSearch(t *testing.T) {
 	got := Render(Report{Summary: "s", DuplicateSearchFailed: true})
 

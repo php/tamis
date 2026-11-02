@@ -38,6 +38,8 @@ var (
 	clueSymbol = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}$`)
 	// A public function or method, e.g. http_build_query, SplFixedArray::offsetSet or Request.parse.
 	clueEntryPoint = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,100}((::|\.)[A-Za-z_][A-Za-z0-9_]{0,100})?$`)
+	// The name of a project, e.g. lexbor, libgd or pcre2.
+	projectName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
 )
 
 const (
@@ -63,6 +65,7 @@ type Report struct {
 	CVSS             CVSS            `json:"cvss"`
 	Severity         string          `json:"severity"`
 	Component        string          `json:"component"`
+	Upstream         string          `json:"upstream"`
 
 	// Duplicates come from the comparator, never from the reader.
 	Duplicates []Duplicate `json:"-"`
@@ -219,6 +222,7 @@ func ReaderProperties() (map[string]any, []string) {
 		}},
 		"severity":  map[string]any{"type": "string", "enum": severities, "description": "CVSS 4.0 qualitative rating of your vector"},
 		"component": str("Directory of the extension, SAPI or subsystem the bug belongs to, relative to the repository root, e.g. ext/pgsql or sapi/fpm. For code shared by several of them, the one the report targets. Empty when unknown"),
+		"upstream":  str("Name of the other project the faulty code is bundled from, e.g. lexbor or libgd, so the fix belongs there. Empty when the faulty code is the repository's own or was not located"),
 	}
 	properties["entry_points"].(map[string]any)["maxItems"] = maxEntryPoints
 	properties["related"].(map[string]any)["maxItems"] = maxRelated
@@ -226,12 +230,12 @@ func ReaderProperties() (map[string]any, []string) {
 	properties["policy_exclusions"].(map[string]any)["maxItems"] = maxPolicy
 	properties["cwe"].(map[string]any)["maxItems"] = maxCWE
 
-	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss", "severity", "component"}
+	return properties, []string{"summary", "location", "entry_points", "related", "code_references", "policy_exclusions", "cwe", "cvss", "severity", "component", "upstream"}
 }
 
 // ValidateReader bounds every model-controlled collection and string before expensive verification.
 func ValidateReader(r Report) error {
-	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText || len(r.Severity) > maxText || len(r.Component) > maxText {
+	if len(r.Summary) > maxText || len(r.Location.Path) > maxText || len(r.Location.Symbol) > maxText || len(r.EntryPoints) > maxEntryPoints || len(r.Related) > maxRelated || len(r.CodeReferences) > maxCodeRefs || len(r.PolicyExclusions) > maxPolicy || len(r.CWE) > maxCWE || len(r.CVSS.Vector) > maxText || len(r.CVSS.Reason) > maxText || len(r.Severity) > maxText || len(r.Component) > maxText || len(r.Upstream) > maxText {
 		return errors.New("the report exceeds its limits")
 	}
 	for _, text := range r.EntryPoints {
@@ -409,6 +413,9 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 	if dir := r.Component; dir != "" && (!cluePath.MatchString(dir) || path.Clean(dir) != dir || strings.HasPrefix(dir, ".") || !c.Code.Exists(dir+"/")) {
 		r.Component = ""
 	}
+	if !projectName.MatchString(r.Upstream) {
+		r.Upstream = ""
+	}
 	if r.Severity != "" && !slices.Contains(severities, r.Severity) {
 		r.Severity = ""
 		r.Removed++
@@ -506,6 +513,9 @@ func RenderPrivate(r Report) string {
 		b.WriteString("_The analysis stopped before it finished, so this report may be incomplete._\n\n")
 	}
 	b.WriteString(text(r.Summary) + "\n")
+	if r.Upstream != "" {
+		fmt.Fprintf(&b, "\nThe faulty code is bundled from `%s`, so the fix belongs upstream.\n", r.Upstream)
+	}
 
 	b.WriteString("\n#### Possible duplicates\n\n")
 	switch {
