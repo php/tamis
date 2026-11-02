@@ -114,6 +114,7 @@ func TestInitValidatesArguments(t *testing.T) {
 		"unknown engine": {[]string{"-repository", "acme/project", "-references", "main", "-engine", "gemini"}, "t", "k", `unknown engine "gemini"`},
 		"no token":       {[]string{"-repository", "acme/project", "-references", "main"}, "", "k", "GH_TOKEN and LLM_API_KEY are required"},
 		"no key":         {[]string{"-repository", "acme/project", "-references", "main"}, "t", "", "GH_TOKEN and LLM_API_KEY are required"},
+		"unknown pack":   {[]string{"-repository", "acme/project", "-references", "main", "-packs", "php-src nope"}, "t", "k", `unknown pack "nope"`},
 		"unknown flag":   {[]string{"-repo", "acme/project"}, "t", "k", "flag provided but not defined: -repo"},
 	} {
 		t.Run(name, func(t *testing.T) {

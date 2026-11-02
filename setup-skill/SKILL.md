@@ -18,6 +18,8 @@ Ask only for what you cannot find yourself:
 3. The engine: `claude` with an Anthropic API key, the default, or `openai` with an OpenAI API key or a Codex access token.
 4. Comments or board. With comments, the reporter reads the triage on the advisory, since GitHub cannot post confidential comments yet. With `-board`, the triage only lands on a private organisation project the security team reads. Make sure the user knows the reporter reads the comment before they pick comments. `-board` always creates a new project. To reuse an existing tamis board, run `init` without `-board`, then replace `comment: true` with `project: org/NUMBER` in the workflow it writes and give the App the organisation "Projects" permission in read and write, which only `-board` asks for.
 
+When a [guidance pack](https://github.com/php/tamis/blob/main/docs/configuration.md#guidance-packs) exists for the project, such as `php-src`, pass it with `-packs php-src`.
+
 The runner repository defaults to `org/tamis-runner` and the App to `org-tamis`. Change them with `-runner` and `-app-name` only if those names are taken or the user asks.
 
 A name can be taken by an earlier install or attempt. `gh repo view org/tamis-runner` and `gh api apps/org-tamis` both succeed then, and `init` stops before creating anything. Ask the user whether that leftover is still in use. If it is not, the user deletes it, the App from the organisation settings under "GitHub Apps", rather than adding a second one: an App left installed on the project keeps its write access to the advisories. If it is, pick other names.

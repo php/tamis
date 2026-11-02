@@ -11,7 +11,7 @@ gh auth refresh -s project,workflow
 GH_TOKEN=$(gh auth token) LLM_API_KEY=sk-... tamis init -repository your-org/your-project -references "master origin/release-branch"
 ```
 
-It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name and `-board` creates the project board instead of posting comments. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
+It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name `-board` creates the project board instead of posting comments, and `-packs php-src` turns on the [guidance packs](configuration.md#guidance-packs) of the project. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
 
 ## 1. Create the GitHub App
 

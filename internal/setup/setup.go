@@ -36,6 +36,8 @@ type Config struct {
 	// Since is the date the workflow starts from, as YYYY-MM-DD.
 	Since string
 	Board bool
+	// Packs names the guidance packs the workflow enables.
+	Packs []string
 }
 
 // AppFlow registers a GitHub App from a manifest and returns the code to convert, as AppCode does.
@@ -129,6 +131,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, app AppFlow, out io.Writer)
 	if err := workflow.Execute(&w, map[string]any{
 		"Org": org, "Name": name, "Repository": cfg.Repository, "SHA": sha, "Tag": tag, "Since": cfg.Since,
 		"Engine": cfg.Engine, "Secret": secret, "Slug": a.Slug, "References": strings.Join(cfg.References, " "), "Project": project,
+		"Packs": strings.Join(cfg.Packs, " "),
 	}); err != nil {
 		return "", err
 	}
@@ -187,6 +190,9 @@ jobs:
           github-token: ${{ steps.app.outputs.token }}
           bot-login: [[.Slug]][bot]
           references: [[.References]]
+[[- if .Packs]]
+          packs: [[.Packs]]
+[[- end]]
 [[- if .Project]]
           project: [[.Project]]
 [[- else]]

@@ -22,6 +22,7 @@ import (
 	"github.com/php/tamis/internal/sandbox"
 	"github.com/php/tamis/internal/setup"
 	"github.com/php/tamis/internal/triage"
+	"github.com/php/tamis/skill"
 )
 
 // defaultCodexTokenModel is Codex's default with a ChatGPT account, which does not serve the API models.
@@ -85,6 +86,7 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	provider := fs.String("engine", "claude", "LLM provider, claude or openai")
 	appName := fs.String("app-name", "", `name of the GitHub App, "<org>-tamis" by default`)
 	withBoard := fs.Bool("board", false, "also create a private project board and fill it instead of commenting")
+	packs := fs.String("packs", "", "whitespace-separated guidance packs added to the agent's method, such as php-src")
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -95,13 +97,18 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	org, _, _ := strings.Cut(*repository, "/")
 	refs := strings.Fields(*references)
 	if org == "" || len(refs) == 0 {
-		return errors.New("usage: tamis init -repository org/name -references \"main ...\" [-runner name] [-engine claude|openai] [-app-name name] [-board]")
+		return errors.New("usage: tamis init -repository org/name -references \"main ...\" [-runner name] [-engine claude|openai] [-app-name name] [-board] [-packs \"php-src ...\"]")
 	}
 	if len(refs) > 10 {
 		return errors.New("-references must list at most ten references")
 	}
 	if *provider != "claude" && *provider != "openai" {
 		return fmt.Errorf("unknown engine %q, expected claude or openai", *provider)
+	}
+	for _, name := range strings.Fields(*packs) {
+		if _, err := skill.Pack(name); err != nil {
+			return err
+		}
 	}
 	token, apiKey := os.Getenv("GH_TOKEN"), os.Getenv("LLM_API_KEY")
 	if token == "" || apiKey == "" {
@@ -116,6 +123,7 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 		AppName:    cmp.Or(*appName, org+"-tamis"),
 		Since:      time.Now().UTC().Format(time.DateOnly),
 		Board:      *withBoard,
+		Packs:      strings.Fields(*packs),
 	}
 	app := func(ctx context.Context, org string, manifest map[string]any) (string, error) {
 		return setup.AppCode(ctx, org, manifest, func(u string) {
