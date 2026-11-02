@@ -180,6 +180,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}
 	cfg.NoComment = !comment
+	if v := os.Getenv("FORCE"); v != "" {
+		if cfg.Force, err = strconv.ParseBool(v); err != nil {
+			return fmt.Errorf("FORCE: %w", err)
+		}
+	}
 	// Without comments, triaging the backlog only fills the private board, so every advisory in triage goes.
 	if since.IsZero() && cfg.Advisory == "" && comment {
 		return errors.New("SINCE is required with COMMENT unless ADVISORY is set, so that existing advisories are left alone")

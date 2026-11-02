@@ -1637,6 +1637,46 @@ func TestRunWithoutCommentsRetriesAnAnalysisAStoppedRunLeftPending(t *testing.T)
 	require.Empty(t, gh.posted)
 }
 
+func TestRunForcedTriagesAgainAnAdvisoryItsItemHoldsATriageFor(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Look first", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16", NoComment: true, Force: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""), "a forced run skipped a triaged advisory")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"), "the new triage did not replace the old one")
+	require.Empty(t, gh.posted)
+}
+
+func TestRunForcedKeepsTheTriageAnItemHoldsWhenTheNewOneFails(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new"}
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Look first", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+
+	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16", NoComment: true, Force: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""))
+	require.Equal(t, "Look first", gh.Value(id, "Priority"), "a failed forced triage erased the previous one")
+	require.Equal(t, "Critical", gh.Value(id, "Severity"))
+}
+
+func TestRunForcedTriagesAgainAnAdvisoryOutOfAttempts(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Analysis failed", "Attempts": 3})
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16", NoComment: true, Force: true}, gh, eng))
+
+	require.NotEmpty(t, eng.role(""), "a forced run skipped an advisory out of attempts")
+	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
+}
+
+func TestRunRefusesToForceWithComments(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.EqualError(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16", Force: true}, gh, eng), "a forced run triages again for the board only, so it needs comments off")
+	require.Empty(t, eng.calls)
+	require.Empty(t, gh.posted)
+}
+
 func TestRunWithoutCommentsGivesUpOnAnAnalysisThatKeepsStopping(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Analysis pending", "Attempts": 3})

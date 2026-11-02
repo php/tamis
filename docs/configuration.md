@@ -26,6 +26,8 @@ The action refuses to run from a public workflow repository or from a `uses:` th
 
 Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN`, `COMMENT` and `PACKS`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
 
+A local run alone also reads `FORCE=true`, which triages every selected advisory again, `ADVISORY` alone or every one in triage, and updates its board item even when it already holds a triage. It needs `COMMENT` off, and a failed new triage leaves the previous one on the board. The action has no such input.
+
 ## Source branches
 
 Fetch the references with `fetch-depth: 0`. For php-src, list the default branch and each PHP branch your disclosure policy covers, such as `master origin/PHP-8.4`, and update the list as releases enter or leave support.
