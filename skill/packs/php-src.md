@@ -19,7 +19,7 @@ A memory violation that needs malicious error handlers, destructors, `__toString
 
 - Compare the faulty code on the source references. When only the development branch holds it, it is present only in an unstable branch.
 - A crash or assertion that only fires on a debug build is a bug, not a security issue. A report under AddressSanitizer with the Zend allocator on is not a non-standard build, while one that needs `USE_ZEND_ALLOC=0` is.
-- In a bundled third-party library, check that php-src reaches the faulty code at all.
+- php-src bundles lexbor in `ext/lexbor/lexbor`, libgd in `ext/gd/libgd`, PCRE2 in `ext/pcre/pcre2lib` and timelib in `ext/date/lib`. A bug there is upstream: name the library and check that php-src reaches the faulty code at all.
 
 ### Calibration
 

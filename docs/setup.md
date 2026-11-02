@@ -11,7 +11,7 @@ gh auth refresh -s project,workflow
 GH_TOKEN=$(gh auth token) LLM_API_KEY=sk-... tamis init -repository your-org/your-project -references "master origin/release-branch"
 ```
 
-It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name `-board` creates the project board instead of posting comments, and `-packs php-src` turns on the [guidance packs](configuration.md#guidance-packs) of the project. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
+It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name, `-board` creates the project board instead of posting comments, and `-packs php-src` turns on the [guidance packs](configuration.md#guidance-packs) of the project. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
 
 ## 1. Create the GitHub App
 
@@ -89,6 +89,7 @@ The command prints the project as `your-org/NUMBER`. It creates a private projec
 | `Policy exclusion` | Single select | `Yes`, `No` |
 | `Located` | Single select | `Yes`, `No` |
 | `Component` | Text | |
+| `Upstream` | Text | |
 | `Original report` | Text | |
 | `Attempts` | Number | |
 
@@ -101,7 +102,7 @@ The code sets `Priority`:
 - `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
 - `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
 
-The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`, or with `issues-repository` the sub-issues its issue gets, the duplicates of its duplicates included. `Component` is the directory of the extension, SAPI or subsystem the model names, such as `sapi/fpm` for FastCGI code a report reaches through FPM, once tamis checks the repository has that directory. Without one, tamis takes the directory of the faulty statement two levels deep, and leaves it empty when the statement was not located. `Original report` holds the oldest report of a group of duplicates, on that report and on each of its duplicates, so a view grouped by it shows each original with its duplicates.
+The model estimates `Severity` from its CVSS vector and ignores the one the reporter claims. `Duplicates` counts the items that name the advisory in `Duplicate of`, or with `issues-repository` the sub-issues its issue gets, the duplicates of its duplicates included. `Component` is the directory of the extension, SAPI or subsystem the model names, such as `sapi/fpm` for FastCGI code a report reaches through FPM, once tamis checks the repository has that directory. Without one, tamis takes the directory of the faulty statement two levels deep, and leaves it empty when the statement was not located. `Upstream` names the project the faulty code is bundled from, such as `lexbor` in php-src, when the fix belongs to that project, and stays empty for the repository's own code. A project created before `Upstream` existed needs that field before upgrading tamis: `gh project field-create NUMBER --owner your-org --name Upstream --data-type TEXT`. `Original report` holds the oldest report of a group of duplicates, on that report and on each of its duplicates, so a view grouped by it shows each original with its duplicates.
 
 At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Severity`, `Policy exclusion`, `Located` and `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to one of those four fields lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
 

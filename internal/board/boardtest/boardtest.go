@@ -62,6 +62,7 @@ func New() *Project {
 		{"Policy exclusion", "single_select", []string{"Yes", "No"}},
 		{"Located", "single_select", []string{"Yes", "No"}},
 		{"Component", "text", nil},
+		{"Upstream", "text", nil},
 		{"Original report", "text", nil},
 		{"Attempts", "number", nil},
 	} {

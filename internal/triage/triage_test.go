@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1412,6 +1413,24 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 			require.Equal(t, tc.located, gh.Value(id, "Located"), "the board cannot rank this triage again")
 			require.Equal(t, "No", gh.Value(id, "Policy exclusion"))
 			require.Equal(t, tc.component, gh.Value(id, "Component"))
+		})
+	}
+}
+
+func TestRunPutsTheUpstreamProjectOnTheBoard(t *testing.T) {
+	for name, tc := range map[string]struct{ upstream, want string }{
+		"bundled":      {"lexbor", "lexbor"},
+		"own code":     {"", ""},
+		"not a name":   {"[lexbor](https://example.com)", ""},
+		"code mention": {"`lexbor`", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := newFixture()
+			eng := &fakeEngine{comparator: `{"duplicates":[]}`, reader: `{"summary":"s","location":{"path":"ext/foo/foo.c","symbol":"php_foo","line":42},"upstream":` + strconv.Quote(tc.upstream) + `}`}
+
+			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
+
+			require.Equal(t, tc.want, gh.Value(gh.Find("GHSA-new"), "Upstream"))
 		})
 	}
 }
