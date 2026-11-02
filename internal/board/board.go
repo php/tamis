@@ -376,7 +376,7 @@ func (t Triage) Priority() string {
 	switch {
 	case t.DuplicateOf != "":
 		return Duplicate
-	case t.Severity != "critical" && t.Severity != "high" || t.Excluded || !t.Located:
+	case t.Severity != "critical" && t.Severity != "high" && t.Severity != "medium" || t.Excluded || !t.Located:
 		return WhenPossible
 	default:
 		return LookFirst
