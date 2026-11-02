@@ -106,6 +106,10 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		r.Branch, r.CreatedAt = reference, a.CreatedAt
 		r.Located = verifiedClues(code, r).Location.Path != ""
+		// Bundled code is named from the faulty statement, so an unlocated one names nothing.
+		if !r.Located {
+			r.Upstream = ""
+		}
 		if r.Incomplete != nil {
 			continue
 		}

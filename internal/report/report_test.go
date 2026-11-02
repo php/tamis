@@ -102,9 +102,8 @@ func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 	require.Empty(t, r.CWE, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.CVSS.Vector, "invented claims should be removed: %+v", r)
 	require.Empty(t, r.Severity, "invented claims should be removed: %+v", r)
-	// Duplicates are dropped silently, and the severity goes with its vector, so only related issues, CWEs and the
-	// vector count.
-	require.Equal(t, 5, r.Removed)
+	// Duplicates are dropped silently, so only related issues, CWEs, the vector and the severity count.
+	require.Equal(t, 6, r.Removed)
 	require.Len(t, r.CodeReferences, 3, "code references are kept and flagged")
 	for _, ref := range r.CodeReferences {
 		assert.False(t, ref.Found, "%+v should not be found", ref)
@@ -342,7 +341,7 @@ func TestRenderPolicyPointEndingWithAPeriod(t *testing.T) {
 }
 
 func TestRenderNamesTheUpstreamProject(t *testing.T) {
-	assert.Contains(t, Render(Report{Summary: "Overflow in the tokenizer.", Upstream: "lexbor"}), "Overflow in the tokenizer.\n\nThe faulty code is bundled from `lexbor`, so the fix belongs upstream.\n")
+	assert.Contains(t, Render(Report{Summary: "Overflow in the tokenizer.", Upstream: "lexbor"}), "Overflow in the tokenizer.\n\nThe faulty code seems to come from `lexbor`, which the repository bundles, so the fix may belong upstream.\n")
 	assert.NotContains(t, Render(Report{Summary: "Overflow in the tokenizer."}), "upstream")
 }
 
@@ -624,20 +623,21 @@ func TestVerifyDropsAnInvalidSeverityOfAValidVector(t *testing.T) {
 	require.Equal(t, 1, r.Removed)
 }
 
-func TestVerifyDropsTheSeverityOfAnInvalidVector(t *testing.T) {
-	r := Report{CVSS: CVSS{Vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}, Severity: "critical"}
+func TestVerifyKeepsTheSeverityOfAnInvalidVector(t *testing.T) {
+	r := Report{CVSS: CVSS{Vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}, Severity: "low"}
 
 	require.NoError(t, checker(t).Verify(context.Background(), &r))
 
-	require.Empty(t, r.Severity, "a severity outlived the vector it rates")
-	require.Equal(t, 1, r.Removed, "the dropped severity counted as a second removed suggestion")
+	require.Empty(t, r.CVSS.Vector)
+	require.Equal(t, "low", r.Severity, "the severity the policy sets was lost with the vector")
+	require.Equal(t, 1, r.Removed)
 }
 
-func TestVerifyDropsASeverityWithoutVector(t *testing.T) {
-	r := Report{Severity: "critical"}
+func TestVerifyKeepsASeverityWithoutVector(t *testing.T) {
+	r := Report{Severity: "low"}
 
 	require.NoError(t, checker(t).Verify(context.Background(), &r))
 
-	require.Empty(t, r.Severity, "a severity rated no vector")
+	require.Equal(t, "low", r.Severity)
 	require.Zero(t, r.Removed)
 }

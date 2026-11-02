@@ -4,6 +4,7 @@ package skill
 import (
 	"embed"
 	"fmt"
+	"slices"
 )
 
 // Text is the method of the reader, which sees the report.
@@ -24,12 +25,19 @@ var Confirm string
 //go:embed packs/*.md
 var packs embed.FS
 
-// Pack returns the guidance of a built-in pack, named after its file in packs/.
-func Pack(name string) (string, error) {
-	text, err := packs.ReadFile("packs/" + name + ".md")
-	if err != nil {
-		return "", fmt.Errorf("unknown pack %q", name)
+// Packs joins the guidance of the built-in packs, each named after its file in packs/, once each in the given order.
+func Packs(names []string) (string, error) {
+	var guidance string
+	for i, name := range names {
+		if slices.Contains(names[:i], name) {
+			continue
+		}
+		text, err := packs.ReadFile("packs/" + name + ".md")
+		if err != nil {
+			return "", fmt.Errorf("unknown pack %q", name)
+		}
+		guidance += "\n" + string(text)
 	}
 
-	return string(text), nil
+	return guidance, nil
 }
