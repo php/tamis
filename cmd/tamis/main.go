@@ -154,6 +154,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		BotLogin:         os.Getenv("BOT_LOGIN"),
 		Project:          os.Getenv("PROJECT"),
 		IssuesRepository: os.Getenv("ISSUES_REPOSITORY"),
+		Packs:            strings.Fields(os.Getenv("PACKS")),
 	}
 	if cfg.Repo == "" {
 		cfg.Repo = os.Getenv("GITHUB_REPOSITORY")

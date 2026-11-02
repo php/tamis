@@ -7,6 +7,7 @@
 | `api-key` | | Required. API key of the model provider, or a Codex access token with `engine: openai`. |
 | `github-token` | | Required. Token able to read and comment the repository advisories. |
 | `references` | | Required, at most ten. Whitespace-separated local git references, one per supported branch. tamis analyses the first and locates the cited code on all of them. A missing reference fails the analysis. |
+| `packs` | | Whitespace-separated [guidance packs](#guidance-packs) added to the agent's method, such as `php-src`. An unknown pack fails the run. |
 | `since` | | Triage only advisories created after this date, `2026-10-22` or RFC 3339. Required with `comment: true` unless `advisory` is set. Without it, every advisory in triage goes on the board. |
 | `advisory` | | Triage this GHSA only, whatever its state and creation date. |
 | `bot-login` | Owner of the token | Login tamis posts as, such as `my-app[bot]`. Required with a GitHub App token. |
@@ -23,7 +24,7 @@
 
 The action refuses to run from a public workflow repository or from a `uses:` that is not a full commit SHA. Update that SHA through a reviewed pull request.
 
-Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN` and `COMMENT`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
+Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN`, `COMMENT` and `PACKS`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
 
 ## Source branches
 
@@ -66,6 +67,14 @@ In the workflow, keep a `timeout-minutes` of at least 240 and a single concurren
 ## Project guidance
 
 tamis appends a `.github/tamis.md` file from the project to the agent's instructions. Use it for what the model cannot guess, such as the scope, the public API, how the project scores CVSS and which configurations are realistic.
+
+## Guidance packs
+
+A pack is guidance shipped with tamis for one project or ecosystem, such as how its security team classifies reports and scores CVSS. tamis appends the packs named in `packs` to the agent's method, in that order, before the project's `.github/tamis.md`. They live in [`skill/packs`](../skill/packs), one Markdown file per pack:
+
+| Pack | For |
+|---|---|
+| `php-src` | php-src and the PHP security classification |
 
 ## Security policy
 

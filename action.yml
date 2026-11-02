@@ -54,6 +54,9 @@ inputs:
   references:
     description: Whitespace-separated local git references, including each supported release branch. The first is analysed, the cited code is located on all of them. All must have been fetched.
     required: true
+  packs:
+    description: Whitespace-separated built-in guidance packs added to the agent's method, such as `php-src`. None by default.
+    required: false
 
 runs:
   # The agent runs in its own hardened container, so tamis itself runs on the runner, next to Docker.
@@ -141,6 +144,7 @@ runs:
         ISSUES_REPOSITORY: ${{ inputs.issues-repository }}
         ISSUES_TOKEN: ${{ inputs.issues-token }}
         COMMENT: ${{ inputs.comment }}
+        PACKS: ${{ inputs.packs }}
     - name: Store private reports
       if: always() && steps.triage.outcome != 'skipped' && steps.reports.outcome == 'success'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

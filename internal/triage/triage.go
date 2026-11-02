@@ -80,6 +80,8 @@ type Config struct {
 	// writes them with a token that only reaches that repository.
 	IssuesRepository string
 	Issues           board.Issues
+	// Packs names the built-in guidance packs appended to the reader's method, such as php-src.
+	Packs []string
 }
 
 // Reader runs the model that sees the untrusted report, sandbox.Reader in production.
@@ -120,6 +122,11 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 	if cfg.NoComment && cfg.Project == "" {
 		return errors.New("a run without comments needs a project board to record its triages")
+	}
+	for _, name := range cfg.Packs {
+		if _, err := skill.Pack(name); err != nil {
+			return err
+		}
 	}
 	ctx = budget.WithLimit(ctx, 800, 256<<20)
 	login := cfg.BotLogin
@@ -343,7 +350,7 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.
 	code := repo.Repo{Dir: cfg.RepoPath, Context: ctx}
 	policies := policyDocuments(code)
 
-	system, err := systemPrompt(cfg.RepoPath)
+	system, err := systemPrompt(cfg.RepoPath, cfg.Packs)
 	if err != nil {
 		return report.Report{}, err
 	}
@@ -645,9 +652,17 @@ func verifiedClues(code repo.Repo, r report.Report) report.Comparison {
 	return c
 }
 
-func systemPrompt(repoPath string) (string, error) {
+func systemPrompt(repoPath string, packs []string) (string, error) {
+	system := skill.Text
+	for _, name := range packs {
+		pack, err := skill.Pack(name)
+		if err != nil {
+			return "", err
+		}
+		system += "\n" + pack
+	}
 	if !(repo.Repo{Dir: repoPath}).Exists(ProfilePath) {
-		return skill.Text, nil
+		return system, nil
 	}
 	profilePath := filepath.Join(repoPath, ProfilePath)
 	// A tracked symlink could point inside .git, where actions/checkout may persist a token.
@@ -659,7 +674,7 @@ func systemPrompt(repoPath string) (string, error) {
 		return "", err
 	}
 
-	return skill.Text + "\n## Project guidance\n\n" + string(profile), nil
+	return system + "\n## Project guidance\n\n" + string(profile), nil
 }
 
 var (
