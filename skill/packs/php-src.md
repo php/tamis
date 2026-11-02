@@ -23,6 +23,6 @@ A memory violation that needs malicious error handlers, destructors, `__toString
 
 ### Calibration
 
-Medium is the usual level for a real bug with some impact. High needs a demonstrated code execution or data exposure, or a denial of service on a default configuration of a common extension. Critical is rare.
+A crash is low, even when remote data triggers it, unless the report shows a leak, a write or code execution beyond it. Medium is the usual level for a real bug with more impact than a crash. High needs a demonstrated code execution or data exposure, or a denial of service on a default configuration of a common extension. Critical is rare.
 
-The team's CVSS 4.0 vectors carry `AT:P`. A crash from remote data is `AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N`, rated medium, because FPM replaces the crashed worker. Exploitation that needs heap shaping is `AC:H`. A hang or unbounded CPU use from a request is `VA:H`.
+The team's CVSS 4.0 vectors carry `AT:P`. A crash from remote data is `AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N`, with low availability because FPM replaces the crashed worker. CVSS rates that vector medium, while the team rates the crash low. Exploitation that needs heap shaping is `AC:H`. A hang or unbounded CPU use from a request is `VA:H`.
