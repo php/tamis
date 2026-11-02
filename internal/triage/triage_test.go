@@ -884,6 +884,25 @@ func TestRunAppendsProjectProfile(t *testing.T) {
 	require.Contains(t, system, "Score CVSS for php-fpm deployments.")
 }
 
+func TestRunAppendsPacksBeforeTheProjectProfile(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+	dir := gitRepo(t, map[string]string{ProfilePath: "Score CVSS for php-fpm deployments."})
+
+	require.NoError(t, run(t, Config{Since: since, RepoPath: dir, Packs: []string{"php-src"}}, gh, eng))
+
+	system := eng.role("")[0].system
+	pack, profile := strings.Index(system, "## php-src classification"), strings.Index(system, "Score CVSS for php-fpm deployments.")
+	require.Positive(t, pack)
+	require.Greater(t, profile, pack, "the project profile should come after the packs")
+}
+
+func TestRunRefusesAnUnknownPack(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.EqualError(t, run(t, Config{Since: since, Packs: []string{"php-src", "unknown"}}, gh, eng), `unknown pack "unknown"`)
+	require.Empty(t, eng.role(""), "no report should be read with an unknown pack")
+}
+
 func TestRunIgnoresAnUntrackedProjectProfile(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	dir := gitRepo(t, map[string]string{"tracked.txt": "x"})
