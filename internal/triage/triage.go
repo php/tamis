@@ -82,6 +82,8 @@ type Config struct {
 	Issues           board.Issues
 	// Packs names the built-in guidance packs appended to the reader's method, such as php-src.
 	Packs []string
+	// Force triages every selected advisory again for the board, even one its item already holds a triage for.
+	Force bool
 	// guidance is the text of Packs, which Run reads once.
 	guidance string
 }
@@ -124,6 +126,9 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 	if cfg.NoComment && cfg.Project == "" {
 		return errors.New("a run without comments needs a project board to record its triages")
+	}
+	if cfg.Force && !cfg.NoComment {
+		return errors.New("a forced run triages again for the board only, so it needs comments off")
 	}
 	guidance, err := skill.Packs(cfg.Packs)
 	if err != nil {
@@ -197,6 +202,11 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			done, failures = priority != "" && priority != board.AnalysisRetrying && priority != board.AnalysisPending, n
 			backfill = !done
 		}
+		// The triage an item already holds stays on the board until a new one replaces it.
+		keep := cfg.Force && done
+		if cfg.Force {
+			done, backfill, failures = false, true, 0
+		}
 		if done && !backfill || failures >= maxAttempts {
 			cancel()
 			log.Info("skipped, already triaged or out of attempts")
@@ -221,7 +231,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		}
 		// The item goes on the board first, so a board refusing writes costs no model run. A failed triage for the
 		// board is not retried, so a report that never completes costs one run only.
-		if backfill {
+		if backfill && !keep {
 			note := fmt.Sprintf("The automated analysis started on %s UTC and has not finished. If this stays after the next run, that run stopped during the analysis.", time.Now().UTC().Format("2006-01-02 at 15:04"))
 			if err := b.PutStatus(advisoryCtx, a, board.AnalysisPending, note, failures+1); err != nil {
 				cancel()
@@ -245,7 +255,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			if !published && !backfill {
 				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(!final))
 			}
-			if b != nil && !published {
+			if b != nil && !published && !keep {
 				priority, note := board.AnalysisFailed, fmt.Sprintf("The automated analysis failed (%s) and will not be retried. A maintainer must triage this report.", describe(err))
 				if !final {
 					priority, note = board.AnalysisRetrying, fmt.Sprintf("The automated analysis failed (%s) on attempt %d of %d. The next run retries it.", describe(err), failures+1, maxAttempts)
