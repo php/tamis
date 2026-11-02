@@ -163,7 +163,7 @@ func TestRunInstallsTamisWithComments(t *testing.T) {
 func TestRunInstallsTamisWithABoardAndOpenAI(t *testing.T) {
 	gh, fl := newFake(), &flow{}
 	cfg := config()
-	cfg.Board, cfg.Engine = true, "openai"
+	cfg.Board, cfg.Engine, cfg.Packs = true, "openai", []string{"php-src"}
 
 	_, err := Run(t.Context(), cfg, gh, fl.run, io.Discard)
 
@@ -173,6 +173,7 @@ func TestRunInstallsTamisWithABoardAndOpenAI(t *testing.T) {
 	with := step(t, gh.files["acme/tamis-runner/.github/workflows/tamis.yml"])
 	require.Equal(t, "acme/16", with["project"])
 	require.Equal(t, "openai", with["engine"])
+	require.Equal(t, "php-src", with["packs"])
 	require.Equal(t, "${{ secrets.OPENAI_API_KEY }}", with["api-key"])
 	require.NotContains(t, with, "comment")
 	require.Len(t, gh.Views, 1)
