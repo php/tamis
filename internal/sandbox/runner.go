@@ -24,16 +24,13 @@ type agent struct {
 // provider's own API.
 func (*agent) EgressHosts() []string { return nil }
 
-// ParseStream hands only the session event to emit, so that the run can be resumed.
+// ParseStream hands every event to harness, which reads the session, a lost conversation and the account
+// errors from them. Read emits none of them further.
 func (a *agent) ParseStream(r io.Reader, emit func(harness.Event)) {
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	go func() {
-		a.Harness.ParseStream(pr, func(e harness.Event) {
-			if e.Kind == harness.KindSession {
-				emit(e)
-			}
-		})
+		a.Harness.ParseStream(pr, emit)
 		_, _ = io.Copy(io.Discard, pr)
 		close(done)
 	}()

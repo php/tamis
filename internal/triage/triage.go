@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alpha-omega-security/harness"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/php/tamis/internal/board"
@@ -96,7 +97,7 @@ type Reader interface {
 var retryDelay = time.Minute
 
 // retrying runs a failed agent once more after retryDelay, so a model provider briefly overloaded or dropping
-// its stream does not cost a triage attempt.
+// its stream does not cost a triage attempt. A revoked account or a spent budget fails the same way again.
 type retrying struct {
 	Reader
 	log *slog.Logger
@@ -106,6 +107,13 @@ func (r retrying) Read(ctx context.Context, req sandbox.Request) (json.RawMessag
 	raw, err := r.Reader.Read(ctx, req)
 	// An incomplete run already wrote a valid report, which the triage keeps.
 	if !errors.As(err, new(*sandbox.Error)) || errors.As(err, new(*sandbox.Incomplete)) {
+		return raw, err
+	}
+	var account *harness.AccountError
+	if errors.As(err, &account) && !harness.AccountErrorResumable(account.Detail) {
+		return raw, err
+	}
+	if !budget.Has(ctx, 1, 0) {
 		return raw, err
 	}
 	r.log.Info("the agent run failed, retrying it", "delay", retryDelay)

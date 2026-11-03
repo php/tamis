@@ -286,6 +286,15 @@ func ValidateReader(r Report) error {
 	return nil
 }
 
+// canonicalCWE spells a catalogued weakness as CWE-<n>, so "cwe-787" or "787" is not dropped.
+func canonicalCWE(id string) string {
+	if canonical, _, ok := cwe.Lookup(id); ok {
+		return canonical
+	}
+
+	return id
+}
+
 // Clues bounds the syntax; identifiers can still carry hostile instructions.
 func Clues(r Report) Comparison {
 	var c Comparison
@@ -301,8 +310,8 @@ func Clues(r Report) Comparison {
 		}
 	}
 	for _, w := range r.CWE {
-		if cweID.MatchString(w.ID) && !slices.Contains(c.CWE, w.ID) {
-			c.CWE = append(c.CWE, w.ID)
+		if id := canonicalCWE(w.ID); cweID.MatchString(id) && !slices.Contains(c.CWE, id) {
+			c.CWE = append(c.CWE, id)
 		}
 	}
 
@@ -393,6 +402,7 @@ func (c Checker) Verify(ctx context.Context, r *Report) error {
 
 	cwes := r.CWE[:0]
 	for _, w := range r.CWE {
+		w.ID = canonicalCWE(w.ID)
 		if !cweID.MatchString(w.ID) {
 			r.Removed++
 			continue

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,7 +166,7 @@ func TestOnlyDockerCanRunTheAgent(t *testing.T) {
 	require.Error(t, err, "an unsupported runtime must fail closed")
 }
 
-func TestAgentKeepsOnlyTheFailuresAndTheSessionOfItsOutput(t *testing.T) {
+func TestAgentKeepsOnlyTheFailuresOfItsOutput(t *testing.T) {
 	h, err := harness.ByName("codex")
 	require.NoError(t, err)
 	a := &agent{Harness: h}
@@ -174,19 +175,43 @@ func TestAgentKeepsOnlyTheFailuresAndTheSessionOfItsOutput(t *testing.T) {
 	a.ParseStream(strings.NewReader(`{"type":"thread.started","thread_id":"thread-1"}`+"\n"+`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.failed","error":{"message":"usage limit"}}`), func(e harness.Event) { events = append(events, e) })
 
 	require.Equal(t, `{"type":"turn.failed","error":{"message":"usage limit"}}`, a.failures.String())
-	require.Equal(t, []harness.Event{{Kind: harness.KindSession, SessionID: "thread-1"}}, events)
+	require.Len(t, events, 3)
+	require.Equal(t, harness.Event{Kind: harness.KindSession, SessionID: "thread-1"}, events[0])
 }
 
-func TestAgentForwardsNoEventWithoutASession(t *testing.T) {
+func TestAgentLetsHarnessRestartALostConversation(t *testing.T) {
 	h, err := harness.ByName("claude")
 	require.NoError(t, err)
 	a := &agent{Harness: h}
-	var events []harness.Event
+	var jobs []harness.Job
+	run := func(_ context.Context, j harness.Job, emit func(harness.Event)) error {
+		jobs = append(jobs, j)
+		if j.ResumeSessionID != "" {
+			a.ParseStream(strings.NewReader("No conversation found with session ID: dead\n"), emit)
+			return errors.New("exit status 1")
+		}
+		a.ParseStream(strings.NewReader(`{"type":"system","subtype":"init","session_id":"fresh"}`+"\n"), emit)
+		return nil
+	}
 
-	a.ParseStream(strings.NewReader("No conversation found with session ID: dead\n"), func(e harness.Event) { events = append(events, e) })
+	session, err := harness.RunSession(t.Context(), run, harness.Job{Prompt: "Answer", ResumeSessionID: "dead", ResumePrompt: "Fix it"}, nil)
 
-	require.Empty(t, events)
+	require.NoError(t, err)
+	require.Len(t, jobs, 2, "a resume whose conversation is lost must restart fresh")
+	require.Empty(t, jobs[1].ResumeSessionID)
+	require.Equal(t, "fresh", session.ID)
 	require.Empty(t, a.failures.String())
+}
+
+func TestAgentLetsHarnessSeeTheAccountError(t *testing.T) {
+	h, err := harness.ByName("claude")
+	require.NoError(t, err)
+	a := &agent{Harness: h}
+	var seen []harness.Event
+
+	a.ParseStream(strings.NewReader(`{"type":"error","error":"Credit balance is too low"}`+"\n"), func(e harness.Event) { seen = append(seen, e) })
+
+	require.True(t, slices.ContainsFunc(seen, func(e harness.Event) bool { return e.Kind == harness.KindError && h.AccountErrorText(e.Text) != "" }), "events = %+v", seen)
 }
 
 func TestReadOutputIsBounded(t *testing.T) {
@@ -205,16 +230,17 @@ func TestReadOutputIsBounded(t *testing.T) {
 }
 
 func TestBackends(t *testing.T) {
-	for name, want := range map[string]struct{ harness, keyEnv, basePath string }{
-		"claude":      {"claude", "ANTHROPIC_API_KEY", "/model-proxy"},
-		"codex":       {"codex", "CODEX_API_KEY", "/model-proxy/v1"},
-		"codex-token": {"codex", "CODEX_ACCESS_TOKEN", "/model-proxy/backend-api/codex"},
+	for name, want := range map[string]struct{ harness, keyEnv, basePath, effort string }{
+		"claude":      {"claude", "ANTHROPIC_API_KEY", "/model-proxy", ""},
+		"codex":       {"codex", "CODEX_API_KEY", "/model-proxy/v1", "medium"},
+		"codex-token": {"codex", "CODEX_ACCESS_TOKEN", "/model-proxy/backend-api/codex", "medium"},
 	} {
 		b, ok := backends[name]
 		assert.True(t, ok, name)
 		assert.Equal(t, want.harness, b.harness, name)
 		assert.Equal(t, want.keyEnv, b.keyEnv, name)
 		assert.Equal(t, want.basePath, b.basePath, name)
+		assert.Equal(t, want.effort, b.effort, name)
 		assert.Equal(t, name == "codex-token", b.accessToken, name)
 	}
 }
@@ -249,7 +275,7 @@ func TestWriteConfig(t *testing.T) {
 			} else {
 				require.Empty(t, got)
 			}
-			for _, want := range []string{"model_provider = \"tamis\"", "model_reasoning_effort = \"medium\"", "supports_websockets = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
+			for _, want := range []string{"model_provider = \"tamis\"", "supports_websockets = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
 				if tc.wantConfig {
 					require.Contains(t, string(got), want)
 				}
@@ -282,6 +308,29 @@ func TestImagesArePinnedByDigest(t *testing.T) {
 		assert.Regexp(t, pinned, image, "%s: %q is not pinned by digest", b.harness, image)
 	}
 	assert.Len(t, Images, len(agents))
+}
+
+func TestAgentImagePinsAgree(t *testing.T) {
+	dockerfile, err := os.ReadFile("../../docker/agent/Dockerfile")
+	require.NoError(t, err)
+	gomod, err := os.ReadFile("../../go.mod")
+	require.NoError(t, err)
+
+	locks := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?m)^ARG ([A-Z]+)_(?:AMD64|ARM64)_LOCK=([^@\s]+)@sha256:[0-9a-f]{64}$`).FindAllStringSubmatch(string(dockerfile), -1) {
+		locks[m[1]] = append(locks[m[1]], m[2])
+	}
+	require.NotEmpty(t, locks)
+	for cli, releases := range locks {
+		require.Len(t, releases, 2, "%s must pin one asset per architecture", cli)
+		require.Equal(t, releases[0], releases[1], "%s pins two releases", cli)
+	}
+
+	proxy := regexp.MustCompile(`(?m)^ARG HARNESS_VERSION=(\S+)$`).FindStringSubmatch(string(dockerfile))
+	module := regexp.MustCompile(`(?m)^\s*github\.com/alpha-omega-security/harness (\S+)$`).FindStringSubmatch(string(gomod))
+	require.Len(t, proxy, 2)
+	require.Len(t, module, 2)
+	require.Equal(t, module[1], proxy[1], "harness-proxy in the agent image must match the harness module")
 }
 
 func TestKeepFailuresKeepsOnlyCodexErrorEvents(t *testing.T) {

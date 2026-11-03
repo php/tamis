@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -604,7 +605,43 @@ func list[T any](ctx context.Context, c *Client, next string) ([]T, error) {
 	return all, nil
 }
 
+const (
+	maxGetAttempts = 3
+	// maxRetryAfter is the longest Retry-After a GET waits for, a longer one fails it.
+	maxRetryAfter = time.Minute
+)
+
+var (
+	// retryDelay separates the attempts of a GET when GitHub sends no Retry-After.
+	retryDelay = 2 * time.Second
+	retried    = []int{http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout}
+)
+
+// do tries a GET again when GitHub is briefly overloaded. Writes are tried once, since a retried write may
+// apply twice.
 func (c *Client) do(ctx context.Context, method, u string, body, out any) (*http.Response, error) {
+	for attempt := 1; ; attempt++ {
+		resp, err := c.once(ctx, method, u, body, out)
+		var httpErr *HTTPError
+		if method != http.MethodGet || attempt == maxGetAttempts || !errors.As(err, &httpErr) || !slices.Contains(retried, httpErr.Status) {
+			return resp, err
+		}
+		delay := retryDelay
+		if seconds, perr := strconv.Atoi(resp.Header.Get("Retry-After")); perr == nil && seconds >= 0 {
+			delay = time.Duration(seconds) * time.Second
+		}
+		if delay > maxRetryAfter {
+			return resp, err
+		}
+		select {
+		case <-ctx.Done():
+			return resp, err
+		case <-time.After(delay):
+		}
+	}
+}
+
+func (c *Client) once(ctx context.Context, method, u string, body, out any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
