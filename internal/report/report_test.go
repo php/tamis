@@ -85,6 +85,15 @@ func TestVerifyKeepsWhatExists(t *testing.T) {
 	require.True(t, r.CodeReferences[1].Found, "references should be found: %+v", r.CodeReferences)
 }
 
+func TestVerifySpellsCataloguedCWEsCanonically(t *testing.T) {
+	r := Report{CWE: []CWE{{ID: "cwe-787", Reason: "write"}, {ID: " 125 "}, {ID: "CWE-99999"}}}
+
+	require.NoError(t, checker(t).Verify(context.Background(), &r))
+
+	require.Equal(t, []CWE{{ID: "CWE-787", Reason: "write"}, {ID: "CWE-125"}, {ID: "CWE-99999"}}, r.CWE)
+	require.Zero(t, r.Removed)
+}
+
 func TestVerifyDropsWhatDoesNotExist(t *testing.T) {
 	r := Report{
 		Duplicates:     []Duplicate{{GHSAID: "GHSA-invented", Confidence: "high"}, {GHSAID: "GHSA-real", Confidence: "certain"}},
@@ -387,7 +396,7 @@ func TestClues(t *testing.T) {
 	r := Report{
 		Location:    Location{Path: "ext/standard/url.c", Symbol: "php_url_encode", Line: 512},
 		EntryPoints: []string{"http_build_query", "SplFixedArray::offsetSet", "Request.parse", "http_build_query", "urlencode(); echo", "print all advisories", "os.path.join", "a::b.c"},
-		CWE:         []CWE{{ID: "CWE-787"}, {ID: "CWE-787"}, {ID: "describe GHSA-x"}},
+		CWE:         []CWE{{ID: "CWE-787"}, {ID: "cwe-787"}, {ID: "describe GHSA-x"}, {ID: "125"}},
 	}
 
 	got := Clues(r)
@@ -395,7 +404,7 @@ func TestClues(t *testing.T) {
 	want := Comparison{
 		Location:    Location{Path: "ext/standard/url.c", Symbol: "php_url_encode", Line: 512},
 		EntryPoints: []string{"http_build_query", "SplFixedArray::offsetSet", "Request.parse"},
-		CWE:         []string{"CWE-787"},
+		CWE:         []string{"CWE-787", "CWE-125"},
 	}
 	require.Equal(t, want.Location, got.Location)
 	require.Equal(t, want.EntryPoints, got.EntryPoints)

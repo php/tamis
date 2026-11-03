@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -299,6 +300,49 @@ func TestErrors(t *testing.T) {
 	require.NotErrorIs(t, err, ErrNotFound)
 	require.NotContains(t, err.Error(), "SECRET-PAYLOAD", "the body or the advisory leaked")
 	require.NotContains(t, err.Error(), "GHSA-secret-id", "the body or the advisory leaked")
+}
+
+func TestGetRetriesABrieflyOverloadedGitHub(t *testing.T) {
+	delay := retryDelay
+	retryDelay = 0
+	t.Cleanup(func() { retryDelay = delay })
+	for name, tc := range map[string]struct {
+		statuses   []int
+		retryAfter string
+		post       bool
+		calls      int
+		ok         bool
+	}{
+		"recovers":                {statuses: []int{http.StatusServiceUnavailable, http.StatusOK}, calls: 2, ok: true},
+		"rate limited":            {statuses: []int{http.StatusTooManyRequests, http.StatusOK}, retryAfter: "0", calls: 2, ok: true},
+		"gives up":                {statuses: []int{http.StatusBadGateway, http.StatusBadGateway, http.StatusBadGateway, http.StatusOK}, calls: 3},
+		"retry-after too long":    {statuses: []int{http.StatusTooManyRequests, http.StatusOK}, retryAfter: "3600", calls: 1},
+		"not a transient failure": {statuses: []int{http.StatusUnprocessableEntity, http.StatusOK}, calls: 1},
+		"write":                   {statuses: []int{http.StatusServiceUnavailable, http.StatusOK}, post: true, calls: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				status := tc.statuses[calls]
+				calls++
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{}`)
+			})
+
+			var err error
+			if tc.post {
+				err = c.PostComment(t.Context(), "o/r", "GHSA-aaaa-bbbb-cccc", "body")
+			} else {
+				_, err = c.GetIssue(t.Context(), "o/r", 1)
+			}
+
+			require.Equal(t, tc.calls, calls)
+			require.Equal(t, tc.ok, err == nil, "err = %v", err)
+		})
+	}
 }
 
 func TestNetworkErrorsDoNotLeakTheURL(t *testing.T) {

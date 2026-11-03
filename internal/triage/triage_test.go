@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alpha-omega-security/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -115,8 +116,11 @@ type fakeEngine struct {
 	mu    sync.Mutex
 	calls []engineCall
 	fail  string
-	// crash makes fail look like an agent container exiting on an error.
+	// crash makes fail look like an agent container exiting on an error, cause when set.
 	crash bool
+	cause error
+	// spend uses up the provider budget of the failing call.
+	spend bool
 	// failures is how many calls matching fail fail before the next ones succeed, all of them when zero.
 	failures, failed int
 	// incomplete makes the reader hand back its report with a failed agent run.
@@ -154,6 +158,11 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 	if e.fail != "" && strings.Contains(call.prompt, e.fail) && (e.failures == 0 || e.failed < e.failures) {
 		e.failed++
 		err := errors.New("model unavailable while reading SECRET-PAYLOAD from " + call.prompt)
+		if e.cause != nil {
+			err = e.cause
+		}
+		for e.spend && budget.Take(ctx, 0) {
+		}
 		if e.crash {
 			return nil, &sandbox.Error{Err: err}
 		}
@@ -829,6 +838,37 @@ func TestRunFailsWhenTheRetriedAgentRunFailsAgain(t *testing.T) {
 
 	require.Len(t, eng.role(""), 2, "a failed agent run is retried once only")
 	require.Contains(t, gh.posted["GHSA-new"], report.FailedMarker)
+}
+
+func TestRunRetriesAnAgentRunStoppedByARateLimit(t *testing.T) {
+	noRetryDelay(t)
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: true, cause: &harness.AccountError{Detail: "rate limit reached"}, failures: 1}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
+
+	require.Len(t, eng.role(""), 2)
+}
+
+func TestRunDoesNotRetryARevokedAccount(t *testing.T) {
+	noRetryDelay(t)
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: true, cause: &harness.AccountError{Detail: "invalid_api_key"}}
+	var logs bytes.Buffer
+
+	require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+
+	require.Len(t, eng.role(""), 1)
+	require.NotContains(t, logs.String(), "retrying")
+}
+
+func TestRunDoesNotRetryOnceTheBudgetIsSpent(t *testing.T) {
+	noRetryDelay(t)
+	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new", crash: true, spend: true}
+	var logs bytes.Buffer
+
+	require.Error(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
+
+	require.Len(t, eng.role(""), 1)
+	require.NotContains(t, logs.String(), "retrying")
 }
 
 func TestRunDoesNotRetryAFailureOutsideTheAgentRun(t *testing.T) {
