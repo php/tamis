@@ -2,8 +2,8 @@ package sandbox
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/alpha-omega-security/harness"
 	"github.com/alpha-omega-security/harness/container"
+	"github.com/alpha-omega-security/harness/modelproxy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -99,28 +100,10 @@ func TestErrorHidesTheAgentOutput(t *testing.T) {
 	require.ErrorContains(t, errors.Unwrap(err), "SECRET-PAYLOAD")
 }
 
-func TestBoundedWriterRetainsOnlyTheOutputLimit(t *testing.T) {
-	var w boundedWriter
-	want := strings.Repeat("a", maxAgentOutput)
-	n, err := w.Write([]byte(want))
-	require.NoError(t, err)
-	require.Equal(t, len(want), n)
-	require.Equal(t, want, w.String())
-}
-
-func TestBoundedWriterDiscardsOutputPastTheLimit(t *testing.T) {
-	var w boundedWriter
-	overflow := strings.Repeat("a", maxAgentOutput+1)
-	n, err := w.Write([]byte(overflow))
-	require.NoError(t, err)
-	require.Equal(t, len(overflow), n)
-	require.Len(t, w.String(), maxAgentOutput)
-}
-
 func TestAgentRunsIsolatedWithLimitedResources(t *testing.T) {
 	h, err := harness.ByName("claude")
 	require.NoError(t, err)
-	reader := &Reader{backend: backends["claude"], harness: h, image: "agent", modelPort: "1234"}
+	reader := &Reader{backend: backends["claude"], harness: h, image: "agent", server: &modelproxy.Server{APIPort: "1234"}}
 
 	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", allow, nil)
 
@@ -135,7 +118,7 @@ func TestAgentRunsIsolatedWithLimitedResources(t *testing.T) {
 func TestOfflineAgentReachesOnlyTheModelProxy(t *testing.T) {
 	h, err := harness.ByName("claude")
 	require.NoError(t, err)
-	reader := &Reader{backend: backends["claude"], harness: h, modelPort: "1234"}
+	reader := &Reader{backend: backends["claude"], harness: h, server: &modelproxy.Server{APIPort: "1234"}}
 
 	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", nil, nil)
 
@@ -146,7 +129,7 @@ func TestOfflineAgentReachesOnlyTheModelProxy(t *testing.T) {
 func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
 	h, err := harness.ByName("codex")
 	require.NoError(t, err)
-	reader := &Reader{backend: backends["codex-token"], harness: h, modelPort: "1234"}
+	reader := &Reader{backend: backends["codex-token"], harness: h, server: &modelproxy.Server{HostPorts: []string{"1234"}}}
 
 	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", allow, nil)
 
@@ -159,87 +142,23 @@ func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
 func TestOnlyDockerCanRunTheAgent(t *testing.T) {
 	h, err := harness.ByName("claude")
 	require.NoError(t, err)
-	reader := &Reader{backend: backends["claude"], harness: h, runtime: container.Runtime{Bin: "podman"}, image: "agent", modelPort: "1234"}
+	reader := &Reader{backend: backends["claude"], harness: h, runtime: container.Runtime{Bin: "podman"}, image: "agent", server: &modelproxy.Server{APIPort: "1234"}}
 
 	_, err = reader.runner(t.TempDir(), t.TempDir(), "proxy-token", allow, nil).Open(t.Context(), &agent{Harness: h})
 
 	require.Error(t, err, "an unsupported runtime must fail closed")
 }
 
-func TestAgentKeepsOnlyTheFailuresOfItsOutput(t *testing.T) {
-	h, err := harness.ByName("codex")
-	require.NoError(t, err)
-	a := &agent{Harness: h}
-	var events []harness.Event
-
-	a.ParseStream(strings.NewReader(`{"type":"thread.started","thread_id":"thread-1"}`+"\n"+`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.failed","error":{"message":"usage limit"}}`), func(e harness.Event) { events = append(events, e) })
-
-	require.Equal(t, `{"type":"turn.failed","error":{"message":"usage limit"}}`, a.failures.String())
-	require.Len(t, events, 3)
-	require.Equal(t, harness.Event{Kind: harness.KindSession, SessionID: "thread-1"}, events[0])
-}
-
-func TestAgentLetsHarnessRestartALostConversation(t *testing.T) {
-	h, err := harness.ByName("claude")
-	require.NoError(t, err)
-	a := &agent{Harness: h}
-	var jobs []harness.Job
-	run := func(_ context.Context, j harness.Job, emit func(harness.Event)) error {
-		jobs = append(jobs, j)
-		if j.ResumeSessionID != "" {
-			a.ParseStream(strings.NewReader("No conversation found with session ID: dead\n"), emit)
-			return errors.New("exit status 1")
-		}
-		a.ParseStream(strings.NewReader(`{"type":"system","subtype":"init","session_id":"fresh"}`+"\n"), emit)
-		return nil
-	}
-
-	session, err := harness.RunSession(t.Context(), run, harness.Job{Prompt: "Answer", ResumeSessionID: "dead", ResumePrompt: "Fix it"}, nil)
-
-	require.NoError(t, err)
-	require.Len(t, jobs, 2, "a resume whose conversation is lost must restart fresh")
-	require.Empty(t, jobs[1].ResumeSessionID)
-	require.Equal(t, "fresh", session.ID)
-	require.Empty(t, a.failures.String())
-}
-
-func TestAgentLetsHarnessSeeTheAccountError(t *testing.T) {
-	h, err := harness.ByName("claude")
-	require.NoError(t, err)
-	a := &agent{Harness: h}
-	var seen []harness.Event
-
-	a.ParseStream(strings.NewReader(`{"type":"error","error":"Credit balance is too low"}`+"\n"), func(e harness.Event) { seen = append(seen, e) })
-
-	require.True(t, slices.ContainsFunc(seen, func(e harness.Event) bool { return e.Kind == harness.KindError && h.AccountErrorText(e.Text) != "" }), "events = %+v", seen)
-}
-
-func TestReadOutputIsBounded(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "report.json")
-	for name, size := range map[string]int{"valid": 1 << 20, "too large": 1<<20 + 1} {
-		t.Run(name, func(t *testing.T) {
-			require.NoError(t, os.WriteFile(path, make([]byte, size), 0o600))
-			_, err := readOutput(path)
-			if name == "too large" {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
 func TestBackends(t *testing.T) {
-	for name, want := range map[string]struct{ harness, keyEnv, basePath, effort string }{
-		"claude":      {"claude", "ANTHROPIC_API_KEY", "/model-proxy", ""},
-		"codex":       {"codex", "CODEX_API_KEY", "/model-proxy/v1", "medium"},
-		"codex-token": {"codex", "CODEX_ACCESS_TOKEN", "/model-proxy/backend-api/codex", "medium"},
+	for name, want := range map[string]struct{ harness, keyEnv, effort string }{
+		"claude":      {"claude", "ANTHROPIC_API_KEY", ""},
+		"codex":       {"codex", "CODEX_API_KEY", "medium"},
+		"codex-token": {"codex", "CODEX_ACCESS_TOKEN", "medium"},
 	} {
 		b, ok := backends[name]
 		assert.True(t, ok, name)
 		assert.Equal(t, want.harness, b.harness, name)
 		assert.Equal(t, want.keyEnv, b.keyEnv, name)
-		assert.Equal(t, want.basePath, b.basePath, name)
 		assert.Equal(t, want.effort, b.effort, name)
 		assert.Equal(t, name == "codex-token", b.accessToken, name)
 	}
@@ -260,9 +179,13 @@ func TestWriteConfig(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			state := t.TempDir()
-			r := &Reader{backend: backends[tc.backend], Daybreak: tc.daybreak, ca: []byte("CA")}
+			server := &modelproxy.Server{Origin: "http://proxy:1"}
+			if tc.backend == "codex-token" {
+				server = &modelproxy.Server{Origin: "https://proxy:1", CA: []byte("CA")}
+			}
+			r := &Reader{backend: backends[tc.backend], Daybreak: tc.daybreak, server: server}
 
-			err := r.writeConfig(state, "https://proxy:1")
+			env, err := r.writeConfig(state)
 
 			if tc.wantErr {
 				require.Error(t, err)
@@ -270,20 +193,18 @@ func TestWriteConfig(t *testing.T) {
 				require.NoError(t, err)
 			}
 			got, _ := os.ReadFile(filepath.Join(state, "config.toml"))
-			if tc.wantConfig {
-				require.NotEmpty(t, got)
-			} else {
-				require.Empty(t, got)
-			}
-			for _, want := range []string{"model_provider = \"tamis\"", "supports_websockets = false", "chatgpt_base_url = \"https://proxy:1/model-proxy/backend-api\"", "base_url = \"https://proxy:1" + backends[tc.backend].basePath + "\""} {
-				if tc.wantConfig {
-					require.Contains(t, string(got), want)
-				}
-			}
 			ca, _ := os.ReadFile(filepath.Join(state, caFile))
+			if !tc.wantConfig {
+				require.Empty(t, got)
+				require.Empty(t, env)
+				return
+			}
+			require.True(t, strings.HasPrefix(string(got), fmt.Sprintf("daybreak = %t\n", tc.daybreak)), "config = %q", got)
+			require.Contains(t, string(got), "base_url = \""+backends[tc.backend].provider.BaseURL(server.Origin)+"\"")
 			tokenAuth := strings.Contains(string(got), "requires_openai_auth = true") && !strings.Contains(string(got), "env_key")
-			require.Equal(t, tc.backend == "codex-token", tokenAuth, "access token config = %q, CA = %q", got, ca)
-			require.Equal(t, tokenAuth, string(ca) == "CA", "access token config = %q, CA = %q", got, ca)
+			require.Equal(t, tc.backend == "codex-token", tokenAuth, "config = %q", got)
+			require.Equal(t, tokenAuth, string(ca) == "CA", "CA = %q", ca)
+			require.Equal(t, tokenAuth, slices.Contains(env, "CODEX_CA_CERTIFICATE="+container.StateMount+"/"+caFile), "env = %v", env)
 		})
 	}
 }
@@ -333,68 +254,72 @@ func TestAgentImagePinsAgree(t *testing.T) {
 	require.Equal(t, module[1], proxy[1], "harness-proxy in the agent image must match the harness module")
 }
 
-func TestKeepFailuresKeepsOnlyCodexErrorEvents(t *testing.T) {
-	failed := `{"type":"turn.failed","error":{"message":"usage limit reached"}}`
+func TestFailuresKeepTheErrorsOfACodexRun(t *testing.T) {
+	h, err := harness.ByName("codex")
+	require.NoError(t, err)
 	stream := strings.Join([]string{
 		`{"type":"thread.started","thread_id":"t"}`,
 		`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`,
 		`{"type":"item.completed","item":{"type":"error","message":"tool failed"}}`,
-		`not json`,
 		`{"type":"error","message":"stream disconnected"}`,
-		failed,
+		`{"type":"turn.failed","error":{"message":"usage limit reached"}}`,
 	}, "\n")
-	var kept strings.Builder
+	var failed failures
 
-	keepFailures(strings.NewReader(stream), &kept)
+	h.ParseStream(strings.NewReader(stream), failed.keep)
 
-	require.Equal(t, `{"type":"item.completed","item":{"type":"error","message":"tool failed"}}`+"\n"+`{"type":"error","message":"stream disconnected"}`+"\n"+failed, kept.String())
+	require.Equal(t, failures{"tool failed", "stream disconnected", "usage limit reached"}, failed)
 }
 
-func TestKeepFailuresSkipsALineLongerThanTheOutputLimit(t *testing.T) {
-	failed := `{"type":"turn.failed","error":{"message":"usage limit"}}`
-	stream := `{"type":"error","message":"` + strings.Repeat("a", 2*maxAgentOutput) + `"}` + "\n" + failed
-	var kept strings.Builder
+func TestFailuresKeepNothingFromASuccessfulRun(t *testing.T) {
+	h, err := harness.ByName("codex")
+	require.NoError(t, err)
+	var failed failures
 
-	keepFailures(strings.NewReader(stream), &kept)
+	h.ParseStream(strings.NewReader(`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.completed","usage":{"input_tokens":1}}`), failed.keep)
 
-	require.Equal(t, failed, kept.String())
+	require.Empty(t, failed)
 }
 
-func TestKeepFailuresKeepsNothingFromASuccessfulRun(t *testing.T) {
-	var kept strings.Builder
-
-	keepFailures(strings.NewReader(`{"type":"turn.completed","usage":{"input_tokens":1}}`+"\nnot json\n"), &kept)
-
-	require.Empty(t, kept.String())
-}
-
-func TestSalvageKeepsAValidReportFromAFailedRun(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "report.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"ok":true}`), 0o600))
+func TestOutcomeKeepsAValidReportFromAFailedRun(t *testing.T) {
 	failure := errors.New("exit status 1")
 
-	raw, err := salvage(path, func(json.RawMessage) error { return nil }, failure)
+	raw, err := outcome([]byte(`{"ok":true}`), failure, failures{"usage limit reached"})
 
 	require.JSONEq(t, `{"ok":true}`, string(raw))
 	var incomplete *Incomplete
 	require.ErrorAs(t, err, &incomplete)
 	require.ErrorIs(t, err, failure, "the agent error was lost")
+	require.ErrorContains(t, errors.Unwrap(errors.Unwrap(err)), "usage limit reached")
 }
 
-func TestSalvageFailsWithoutAValidReport(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "report.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"ok":false}`), 0o600))
-	invalid := func(json.RawMessage) error { return errors.New("invalid") }
+func TestOutcomeFailsAFailedRunWithoutAValidReport(t *testing.T) {
+	failure := errors.New("exit status 1")
 
-	for name, path := range map[string]string{"invalid": path, "missing": filepath.Join(dir, "missing.json")} {
-		raw, err := salvage(path, invalid, errors.New("exit status 1"))
+	for name, err := range map[string]error{"run": failure, "run and repair": errors.Join(&harness.ValidationError{Detail: "invalid"}, failure)} {
+		raw, err := outcome(nil, err, nil)
 		require.Nil(t, raw, name)
 		var agent *Error
 		require.ErrorAs(t, err, &agent, name)
+		require.ErrorIs(t, err, failure, name)
+		require.NotErrorIs(t, err, ErrNoReport, name)
 		var incomplete *Incomplete
 		require.False(t, errors.As(err, &incomplete), name)
 	}
+}
+
+func TestOutcomeReportsAnInvalidReport(t *testing.T) {
+	raw, err := outcome(nil, &harness.ValidationError{Detail: "invalid"}, nil)
+
+	require.Nil(t, raw)
+	require.ErrorIs(t, err, ErrNoReport)
+}
+
+func TestOutcomeReturnsAValidReport(t *testing.T) {
+	raw, err := outcome([]byte(`{"ok":true}`), nil, nil)
+
+	require.NoError(t, err)
+	require.JSONEq(t, `{"ok":true}`, string(raw))
 }
 
 func TestWriteWorkspaceWritesTheRequestFiles(t *testing.T) {
