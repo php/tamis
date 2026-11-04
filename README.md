@@ -34,6 +34,45 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 
 The agent runs in an isolated container driven by [harness](https://github.com/alpha-omega-security/harness), the Alpha-Omega library behind [scrutineer](https://github.com/alpha-omega-security/scrutineer). [Security](docs/security.md) describes what the sandbox allows.
 
+```mermaid
+flowchart LR
+    subgraph gh["GitHub"]
+        adv[("Advisory in triage")]
+        others[("Other advisories,<br/>embargoed and closed")]
+        pub["Public issues<br/>and pull requests"]
+        board["Private project board"]
+    end
+
+    subgraph runner["Runner of the private workflow repository"]
+        tamis["tamis"]
+        proxy["Model proxy,<br/>holds the API key"]
+        art[("Private artifact,<br/>kept 7 days")]
+    end
+
+    subgraph sandbox["Throwaway containers, no secret"]
+        reader["Agent reading the report<br/>against a read-only clone"]
+        dup["Offline agent<br/>searching duplicates"]
+        confirm["Offline agent confirming<br/>one unpublished candidate"]
+    end
+
+    provider["Model provider"]
+
+    adv -->|report and comments| tamis
+    others -->|read with the App token| tamis
+    tamis -->|report and source| reader
+    reader -->|unauthenticated search| pub
+    reader -->|report.json| tamis
+    tamis -->|"report, checked clues,<br/>every other advisory"| dup
+    dup -->|identifiers and confidence| tamis
+    tamis -->|"candidate without<br/>its identifier"| confirm
+    confirm -->|exact or not| tamis
+    reader & dup & confirm -.->|model requests| proxy
+    proxy --> provider
+    tamis -->|checked, escaped comment| adv
+    tamis -.->|board item| board
+    tamis -->|complete result| art
+```
+
 ## Before installing
 
 GitHub cannot post confidential advisory comments yet, so with `comment: true` the reporter reads the comment. tamis also sends the report to the model provider you choose. Check that your disclosure policy allows both.
