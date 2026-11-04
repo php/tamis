@@ -1,34 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":disableDependencyDashboard"],
+  "extends": [
+    "config:recommended",
+    ":disableDependencyDashboard",
+    "github>alpha-omega-security/harness//renovate/agent-clis#v0.1.21"
+  ],
   "enabledManagers": ["gomod", "github-actions", "dockerfile", "custom.regex"],
   "automerge": false,
   "internalChecksFilter": "strict",
   "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Update Claude Code release assets and their SHA-256 pins",
-      "managerFilePatterns": ["/^docker/agent/Dockerfile$/"],
-      "matchStrings": [
-        "ARG CLAUDE_(?:AMD64|ARM64)_LOCK=(?<currentValue>v\\d+\\.\\d+\\.\\d+)@sha256:(?<currentDigest>[a-f0-9]{64})"
-      ],
-      "packageNameTemplate": "anthropics/claude-code",
-      "depNameTemplate": "anthropics/claude-code",
-      "datasourceTemplate": "github-release-attachments",
-      "versioningTemplate": "semver-coerced"
-    },
-    {
-      "customType": "regex",
-      "description": "Update Codex CLI package assets and their SHA-256 pins",
-      "managerFilePatterns": ["/^docker/agent/Dockerfile$/"],
-      "matchStrings": [
-        "ARG CODEX_(?:AMD64|ARM64)_LOCK=(?<currentValue>rust-v\\d+\\.\\d+\\.\\d+)@sha256:(?<currentDigest>[a-f0-9]{64})"
-      ],
-      "packageNameTemplate": "openai/codex",
-      "depNameTemplate": "openai/codex",
-      "datasourceTemplate": "github-release-attachments",
-      "versioningTemplate": "regex:^rust-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<prerelease>.+))?$"
-    },
     {
       "customType": "regex",
       "description": "Update the harness-proxy version built into the agent image",
@@ -74,18 +54,6 @@
       "description": "The agent CLIs read hostile reports: wait a week so a pulled release is not picked up",
       "matchManagers": ["custom.regex"],
       "minimumReleaseAge": "7 days"
-    },
-    {
-      "description": "Keep both Claude Code assets on one release",
-      "matchPackageNames": ["anthropics/claude-code"],
-      "groupName": "Claude Code",
-      "minimumGroupSize": 2
-    },
-    {
-      "description": "Keep both Codex assets on one release",
-      "matchPackageNames": ["openai/codex"],
-      "groupName": "Codex CLI",
-      "minimumGroupSize": 2
     },
     {
       "description": "harness-proxy in the agent image must match the harness module tamis is built with",
