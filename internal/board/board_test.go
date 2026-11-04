@@ -390,7 +390,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 	require.NotNil(t, issue, "the item is a draft")
 	require.Len(t, p.Issues, 1, "a second put created another issue")
 	require.Equal(t, "acme/private-issues", issue.Repo)
-	require.Equal(t, "Overflow found by @​someone", issue.Title, "a mention in the title would notify")
+	require.Equal(t, "Overflow found by @\u200bsomeone", issue.Title, "a mention in the title would notify")
 	require.Equal(t, "https://x/GHSA-new\n\nthe comment\n\n<!-- tamis-issue GHSA-new -->", issue.Body)
 	require.Equal(t, "open", issue.State)
 	require.Empty(t, p.Titles, "a draft was created next to the issue")
