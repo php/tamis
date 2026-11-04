@@ -31,6 +31,8 @@ jobs:
       - run: go vet ./...
       # The evals call real models and never run here, so vetting is what keeps them compiling.
       - run: go vet -tags evals ./...
+      - run: go tool staticcheck ./...
+      - run: go tool govulncheck ./...
       - run: go tool gotestsum --format github-actions -- -race -count=1 ./...
 
   # release.yml only runs on tags, so a stale lockfile entry would otherwise break the next release.
@@ -45,6 +47,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - run: gh actions-lock --verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  zizmor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: pipx run zizmor==1.29.0 --format github .
         env:
           GH_TOKEN: ${{ github.token }}
 

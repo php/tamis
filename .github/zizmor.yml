@@ -1,0 +1,7 @@
+rules:
+  # actions.lock pins these workflows' actions to commits, which zizmor does not read.
+  unpinned-uses:
+    ignore:
+      - agent-image.yml
+      - ci.yml
+      - release.yml

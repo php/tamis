@@ -264,6 +264,7 @@ func TestProjectErrors(t *testing.T) {
 	})
 
 	_, err := c.CreateDraft(context.Background(), "php", 16, "t", "b")
+	require.Error(t, err)
 	require.Error(t, c.UpdateDraft(context.Background(), "DI_6", "b"))
 	_, err = c.GetRepository(context.Background(), "acme/private-issues")
 	require.Error(t, err)

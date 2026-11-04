@@ -69,7 +69,8 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      # The job pushes the branch of its pull request with these credentials.
+      - uses: actions/checkout@v7.0.1 # zizmor: ignore[artipacked]
       - name: Open a pull request pinning the new digests
         env:
           GH_TOKEN: ${{ github.token }}

@@ -22,6 +22,8 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
+          # A Go cache restored from another workflow could end up in the attested binaries.
+          cache: false
       - name: Build
         env:
           CGO_ENABLED: "0"

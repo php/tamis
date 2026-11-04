@@ -14,6 +14,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bitfield/gotestdox v0.2.3 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
@@ -41,12 +42,20 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
+	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/telemetry v0.0.0-20261010193011-f71dc92da45e // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
+	golang.org/x/vuln v1.9.0 // indirect
 	gotest.tools/gotestsum v1.13.0 // indirect
+	honnef.co/go/tools v0.8.2 // indirect
 )
 
-tool gotest.tools/gotestsum
+tool (
+	golang.org/x/vuln/cmd/govulncheck
+	gotest.tools/gotestsum
+	honnef.co/go/tools/cmd/staticcheck
+)
