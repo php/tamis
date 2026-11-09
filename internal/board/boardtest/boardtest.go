@@ -255,7 +255,7 @@ func (p *Project) ListIssues(_ context.Context, repo string) ([]github.Issue, er
 	var issues []github.Issue
 	for n, i := range p.Issues {
 		if i.Repo == repo {
-			issues = append(issues, github.Issue{ID: i.ID, Number: n, Title: i.Title, Body: i.Body})
+			issues = append(issues, github.Issue{ID: i.ID, Number: n, Title: i.Title, Body: i.Body, State: i.State, StateReason: i.StateReason})
 		}
 	}
 

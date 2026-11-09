@@ -58,6 +58,7 @@ type GitHub interface {
 	Login(ctx context.Context) (string, error)
 	ListComments(ctx context.Context, repo, ghsa string) ([]github.Comment, error)
 	PostComment(ctx context.Context, repo, ghsa, body string) error
+	UpdateAdvisory(ctx context.Context, repo, ghsa string, fields map[string]any) error
 }
 
 type Config struct {
@@ -81,6 +82,8 @@ type Config struct {
 	// writes them with a token that only reaches that repository.
 	IssuesRepository string
 	Issues           board.Issues
+	// CloseDuplicates closes the advisory of an issue a maintainer closed as a duplicate, see board.CloseDuplicates.
+	CloseDuplicates bool
 	// Packs names the built-in guidance packs appended to the reader's method, such as php-src.
 	Packs []string
 	// Force triages every selected advisory again for the board, even one its item already holds a triage for.
@@ -163,6 +166,13 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		if b, err = board.Open(ctx, gh, cfg.Issues, cfg.Project, cfg.IssuesRepository, cfg.Repo); err != nil {
 			boardErr = fmt.Errorf("opening the project board: %w", err)
 			log.Error("the project board is left out of this run", "reason", boardErr.Error())
+		}
+	}
+	// The issues were read when the board opened, so the duplicates close before the triage takes hours.
+	if b != nil && cfg.CloseDuplicates {
+		if err := b.CloseDuplicates(ctx, gh, cfg.Repo, all); err != nil {
+			log.Error("closing the duplicates failed", "reason", describe(err))
+			boardErr = errors.Join(boardErr, errors.New("closing the duplicates: "+describe(err)))
 		}
 	}
 	log.Info("advisories to check", "count", len(slices.DeleteFunc(slices.Clone(all), func(a github.Advisory) bool { return !selected(cfg, a) })))
@@ -283,7 +293,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if b != nil {
 		if err := b.Sync(ctx, all); err != nil {
 			log.Error("syncing the project board failed", "reason", describe(err))
-			boardErr = errors.New("syncing the project board: " + describe(err))
+			boardErr = errors.Join(boardErr, errors.New("syncing the project board: "+describe(err)))
 		}
 	}
 	log.Info("done", "triaged", triaged, "already_triaged", skipped, "failed", failed)

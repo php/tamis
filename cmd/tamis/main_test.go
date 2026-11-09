@@ -71,11 +71,13 @@ func TestRunValidatesConfiguration(t *testing.T) {
 		"issues token required": {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "ISSUES_REPOSITORY": "o/r-security"}, "ISSUES_REPOSITORY needs an ISSUES_TOKEN of its own"},
 		"issues token reused":   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "ISSUES_REPOSITORY": "o/r-security", "ISSUES_TOKEN": "t"}, "ISSUES_REPOSITORY needs an ISSUES_TOKEN of its own"},
 		"invalid force":         {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "FORCE": "maybe"}, "FORCE"},
+		"invalid close":         {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "CLOSE_DUPLICATES": "maybe"}, "CLOSE_DUPLICATES"},
+		"close without issues":  {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "CLOSE_DUPLICATES": "true"}, "CLOSE_DUPLICATES needs ISSUES_REPOSITORY"},
 		"invalid comment":       {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "COMMENT": "maybe"}, "COMMENT"},
 		"references required":   {map[string]string{"REPOSITORY": "o/r", "SINCE": "2026-10-22", "GH_TOKEN": "t", "LLM_API_KEY": "k", "OUTPUT_DIR": t.TempDir()}, "REFERENCES must list"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "OUTPUT_DIR", "REFERENCES", "PROJECT", "ISSUES_REPOSITORY", "ISSUES_TOKEN", "COMMENT", "PACKS", "FORCE"} {
+			for _, k := range []string{"REPOSITORY", "GITHUB_REPOSITORY", "ADVISORY", "REPO_PATH", "BOT_LOGIN", "DAYBREAK", "SINCE", "GH_TOKEN", "ENGINE", "MODEL", "LLM_API_KEY", "OUTPUT_DIR", "REFERENCES", "PROJECT", "ISSUES_REPOSITORY", "ISSUES_TOKEN", "CLOSE_DUPLICATES", "COMMENT", "PACKS", "FORCE"} {
 				t.Setenv(k, tc.env[k])
 			}
 

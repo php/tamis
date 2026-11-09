@@ -205,7 +205,7 @@ func TestIssues(t *testing.T) {
 			fmt.Fprint(w, `{"private":true}`)
 		case "GET /repos/acme/private-issues/issues":
 			assert.Equal(t, "all", r.URL.Query().Get("state"), "closed issues would be created again")
-			fmt.Fprint(w, `[{"id":42,"number":7,"body":"b"}]`)
+			fmt.Fprint(w, `[{"id":42,"number":7,"body":"b","state":"closed","state_reason":"duplicate"}]`)
 		case "POST /repos/acme/private-issues/issues":
 			assert.Equal(t, map[string]any{"title": "t", "body": "b"}, body)
 			w.WriteHeader(http.StatusCreated)
@@ -237,7 +237,7 @@ func TestIssues(t *testing.T) {
 	require.True(t, repo.Private)
 	issues, err := c.ListIssues(context.Background(), "acme/private-issues")
 	require.NoError(t, err)
-	require.Equal(t, []Issue{{ID: 42, Number: 7, Body: "b"}}, issues)
+	require.Equal(t, []Issue{{ID: 42, Number: 7, Body: "b", State: "closed", StateReason: "duplicate"}}, issues)
 	issue, err := c.CreateIssue(context.Background(), "acme/private-issues", "t", "b")
 	require.NoError(t, err)
 	require.Equal(t, int64(42), issue.ID)
@@ -400,16 +400,40 @@ func TestNew(t *testing.T) {
 	require.Positive(t, c.HTTP.Timeout)
 }
 
+func TestUpdateAdvisory(t *testing.T) {
+	c := newTestClient(t, func(_ http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPatch, r.Method)
+		assert.Equal(t, "/repos/o/r/security-advisories/GHSA-1", r.URL.Path)
+		var body map[string]any
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, map[string]any{"credits": []any{map[string]any{"login": "bob", "type": "reporter"}}}, body)
+	})
+	require.NoError(t, c.UpdateAdvisory(t.Context(), "o/r", "GHSA-1", map[string]any{"credits": []Credit{{Login: "bob", Type: "reporter"}}}))
+
+	c = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	var httpErr *HTTPError
+	require.ErrorAs(t, c.UpdateAdvisory(t.Context(), "o/r", "GHSA-1", map[string]any{"state": "closed"}), &httpErr)
+	require.Equal(t, http.StatusForbidden, httpErr.Status)
+}
+
+func TestCommentIssueReportsARefusal(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	var httpErr *HTTPError
+	require.ErrorAs(t, c.CommentIssue(t.Context(), "acme/private-issues", 7, "c"), &httpErr)
+	require.Equal(t, http.StatusForbidden, httpErr.Status)
+}
+
 func TestGetAdvisoryReadsTheCurrentReportAndReporter(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/repos/o/r/security-advisories/GHSA-1", r.URL.Path)
-		fmt.Fprint(w, `{"ghsa_id":"GHSA-1","description":"current revision","author":{"login":"reporter"}}`)
+		fmt.Fprint(w, `{"ghsa_id":"GHSA-1","description":"current revision","author":{"login":"reporter"},"credits":[{"login":"helper","type":"analyst"}]}`)
 	})
 	a, err := c.GetAdvisory(t.Context(), "o/r", "GHSA-1")
 	require.NoError(t, err)
 	require.Equal(t, "current revision", a.Description)
 	require.Equal(t, "reporter", a.Author.Login)
+	require.Equal(t, []Credit{{Login: "helper", Type: "analyst"}}, a.Credits)
 	c = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
 	_, err = c.GetAdvisory(t.Context(), "o/r", "missing")
 	require.ErrorIs(t, err, ErrNotFound, "missing advisory accepted")

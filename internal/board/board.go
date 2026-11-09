@@ -174,6 +174,8 @@ type item struct {
 	// issue, zero without one.
 	issue           int
 	issueID, parent int64
+	// closedAs is the state reason of a closed issue, such as "duplicate", empty while it is open.
+	closedAs string
 	// triage is nil for an item without one, whose priority is a status Sync leaves alone.
 	triage *Triage
 }
@@ -330,7 +332,16 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 			return nil, err
 		}
 		b.unlisted = map[string]github.Issue{}
+		byIssue := map[int]*item{}
+		for _, it := range b.items {
+			if it.issue != 0 {
+				byIssue[it.issue] = it
+			}
+		}
 		for _, i := range all {
+			if it := byIssue[i.Number]; it != nil && i.State == "closed" {
+				it.closedAs = i.StateReason
+			}
 			if ghsa := strings.ToLower(markedAdvisory(i.Body)); ghsa != "" && b.items[ghsa] == nil {
 				b.unlisted[ghsa] = i
 			}
@@ -641,6 +652,86 @@ func (b *Board) option(field, value string) github.FieldValue {
 	return v
 }
 
+// Advisories writes the advisories, with the token of their repository.
+type Advisories interface {
+	GetAdvisory(ctx context.Context, repo, ghsa string) (github.Advisory, error)
+	UpdateAdvisory(ctx context.Context, repo, ghsa string, fields map[string]any) error
+	ListComments(ctx context.Context, repo, ghsa string) ([]github.Comment, error)
+	PostComment(ctx context.Context, repo, ghsa, body string) error
+}
+
+// CloseDuplicates closes the advisory of each issue a maintainer closed as a duplicate while that advisory waits
+// for a decision, and tells its reporter on it. The reporter is credited on the original report of the group when
+// that one waits too. An advisory the board names no original for stays as it is. Each advisory it closes is
+// marked closed in advisories, so the rest of the run sees it.
+func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string, advisories []github.Advisory) error {
+	var errs []error
+	for i, a := range advisories {
+		it := b.items[strings.ToLower(a.GHSAID)]
+		if it == nil || it.closedAs != "duplicate" || it.duplicateOf == "" || a.State != "triage" && a.State != "draft" {
+			continue
+		}
+		// A Duplicate of chain edited by hand into a loop has no oldest report, the one it stops at names another.
+		original := b.oldest(it.duplicateOf)
+		if o := b.items[strings.ToLower(original)]; o != nil && o.duplicateOf != "" {
+			continue
+		}
+		credited, err := closeDuplicate(ctx, gh, repo, a, original)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("closing %s as a duplicate of %s: %w", a.GHSAID, original, err))
+			continue
+		}
+		advisories[i].State = "closed"
+		// The note comes after the close, so a close that fails again next run never posts it twice.
+		note := fmt.Sprintf("Closed %s as a duplicate of %s", a.GHSAID, original)
+		if o := b.items[strings.ToLower(original)]; o != nil && o.issue != 0 {
+			note += fmt.Sprintf(" (#%d)", o.issue)
+		}
+		// A login in backticks notifies nobody.
+		if credited != "" {
+			note += fmt.Sprintf(", where `%s` is credited as a reporter", credited)
+		}
+		if err := b.ig.CommentIssue(ctx, b.issues, it.issue, note+"."); err != nil {
+			errs = append(errs, fmt.Errorf("noting the close of %s on its issue: %w", a.GHSAID, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// closeDuplicate comments before closing, since the next run leaves a closed advisory alone. A close that failed
+// after its comment finds that comment on the next run instead of posting it again. It returns the login
+// credited on the original, empty when the original credits nobody for it.
+func closeDuplicate(ctx context.Context, gh Advisories, repo string, a github.Advisory, original string) (string, error) {
+	o, err := gh.GetAdvisory(ctx, repo, original)
+	if err != nil {
+		return "", err
+	}
+	comment := fmt.Sprintf("This report is closed as a duplicate of %s, reported earlier.", o.GHSAID)
+	credited := ""
+	if login := a.Author.Login; login != "" && !strings.EqualFold(login, o.Author.Login) && (o.State == "triage" || o.State == "draft") {
+		if !slices.ContainsFunc(o.Credits, func(c github.Credit) bool { return strings.EqualFold(c.Login, login) }) {
+			credits := append(o.Credits, github.Credit{Login: login, Type: "reporter"})
+			if err := gh.UpdateAdvisory(ctx, repo, o.GHSAID, map[string]any{"credits": credits}); err != nil {
+				return "", err
+			}
+		}
+		comment += " You are credited on it as a reporter."
+		credited = login
+	}
+	comments, err := gh.ListComments(ctx, repo, a.GHSAID)
+	if err != nil {
+		return "", err
+	}
+	if !slices.ContainsFunc(comments, func(c github.Comment) bool { return c.Body == comment }) {
+		if err := gh.PostComment(ctx, repo, a.GHSAID, comment); err != nil {
+			return "", err
+		}
+	}
+
+	return credited, gh.UpdateAdvisory(ctx, repo, a.GHSAID, map[string]any{"state": "closed"})
+}
+
 // Sync mirrors the state of every advisory on its item, counts the duplicates of each report, gives every
 // report of a duplicate group the identifier of its oldest one and ranks every triage again, so a new priority
 // rule reaches the board without a model run. It only writes the items that changed.
@@ -666,7 +757,8 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 	for ghsa, it := range b.items {
 		var values []github.FieldValue
 		if state, ok := states[ghsa]; ok && state != it.state {
-			if it.issue != 0 {
+			// An issue a maintainer closed as a duplicate keeps that reason once its advisory closes.
+			if it.issue != 0 && it.closedAs != "duplicate" {
 				if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, issueState(state)); err != nil {
 					errs = append(errs, err)
 					continue
