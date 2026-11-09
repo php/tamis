@@ -43,6 +43,7 @@ type Issue struct {
 	ID                                    int64
 	Repo, Title, Body, State, StateReason string
 	Parent                                int
+	Comments                              []string
 }
 
 func New() *Project {
@@ -301,6 +302,19 @@ func (p *Project) AddProjectIssue(_ context.Context, _ string, _ int, issue int6
 	p.issueOf[id] = int(issue - 1000)
 
 	return github.ProjectItem{ID: id, ContentType: "Issue"}, nil
+}
+
+func (p *Project) CommentIssue(_ context.Context, repo string, number int, body string) error {
+	if p.Err != nil || p.IssueErr != nil {
+		return errors.Join(p.Err, p.IssueErr)
+	}
+	issue := p.Issues[number]
+	if issue == nil || issue.Repo != repo {
+		return &github.HTTPError{Status: 404}
+	}
+	issue.Comments = append(issue.Comments, body)
+
+	return nil
 }
 
 func (p *Project) RemoveSubIssue(_ context.Context, repo string, parent int, child int64) error {
