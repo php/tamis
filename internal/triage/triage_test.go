@@ -44,6 +44,7 @@ type fakeGitHub struct {
 	advisories  []github.Advisory
 	comments    map[string][]github.Comment
 	posted      map[string]string
+	updated     map[string][]map[string]any
 	commentsErr error
 	loginErr    error
 	listErr     error
@@ -91,6 +92,15 @@ func (f *fakeGitHub) ListComments(_ context.Context, _, ghsa string) ([]github.C
 	}
 
 	return f.comments[ghsa], nil
+}
+
+func (f *fakeGitHub) UpdateAdvisory(_ context.Context, _, ghsa string, fields map[string]any) error {
+	if f.updated == nil {
+		f.updated = map[string][]map[string]any{}
+	}
+	f.updated[ghsa] = append(f.updated[ghsa], fields)
+
+	return nil
 }
 
 func (f *fakeGitHub) PostComment(_ context.Context, _, ghsa, body string) error {
@@ -1547,6 +1557,33 @@ func TestRunPutsTheTriageInAPrivateIssue(t *testing.T) {
 	require.Equal(t, "acme/private-issues", issue.Repo)
 	require.Contains(t, issue.Body, report.Marker, "the issue misses the triage")
 	require.Empty(t, gh.posted, "the board triage posted a comment")
+}
+
+func TestRunClosesTheReportOfAnIssueClosedAsADuplicateOnlyWhenAsked(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		gh, eng := newFixture(), &fakeEngine{}
+		cfg := Config{Advisory: "GHSA-done", Project: "acme/16", IssuesRepository: "acme/private-issues", CloseDuplicates: enabled}
+		require.NoError(t, run(t, cfg, gh, eng))
+		id := gh.Find("GHSA-done")
+		for _, f := range gh.Fields {
+			if f.Name == "Duplicate of" {
+				gh.Items[id][f.ID] = "GHSA-old"
+			}
+		}
+		issue := gh.IssueOf(id)
+		issue.State, issue.StateReason = "closed", "duplicate"
+
+		require.NoError(t, run(t, cfg, gh, eng))
+
+		if !enabled {
+			require.Empty(t, gh.updated, "an advisory changed without close-duplicates")
+			continue
+		}
+		require.Equal(t, []map[string]any{{"state": "closed"}}, gh.updated["GHSA-done"])
+		require.Contains(t, gh.posted["GHSA-done"], "duplicate of GHSA-old")
+		require.Equal(t, "duplicate", issue.StateReason)
+		require.Equal(t, "closed", gh.Value(id, "State"), "the board kept the closed report in triage")
+	}
 }
 
 func TestRunNeverCreatesAnIssueInAPublicRepository(t *testing.T) {

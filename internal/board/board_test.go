@@ -1,7 +1,9 @@
 package board
 
 import (
+	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -854,4 +856,249 @@ func TestCreateReportsAFailure(t *testing.T) {
 			require.Empty(t, p.Views)
 		})
 	}
+}
+
+type advisories struct {
+	byID     map[string]*github.Advisory
+	comments map[string][]string
+	updates  int
+	postErr  error
+	closeErr error
+}
+
+func (f *advisories) GetAdvisory(_ context.Context, _, ghsa string) (github.Advisory, error) {
+	a, ok := f.byID[ghsa]
+	if !ok {
+		return github.Advisory{}, github.ErrNotFound
+	}
+
+	return *a, nil
+}
+
+func (f *advisories) UpdateAdvisory(_ context.Context, _, ghsa string, fields map[string]any) error {
+	a := f.byID[ghsa]
+	if credits, ok := fields["credits"]; ok {
+		a.Credits = credits.([]github.Credit)
+	}
+	if state, ok := fields["state"]; ok {
+		if f.closeErr != nil {
+			return f.closeErr
+		}
+		a.State = state.(string)
+	}
+	f.updates++
+
+	return nil
+}
+
+func (f *advisories) ListComments(_ context.Context, _, ghsa string) ([]github.Comment, error) {
+	var all []github.Comment
+	for _, body := range f.comments[ghsa] {
+		all = append(all, github.Comment{Body: body})
+	}
+
+	return all, nil
+}
+
+func (f *advisories) PostComment(_ context.Context, _, ghsa, body string) error {
+	if f.postErr != nil {
+		return f.postErr
+	}
+	f.comments[ghsa] = append(f.comments[ghsa], body)
+
+	return nil
+}
+
+func (f *advisories) list() []github.Advisory {
+	var all []github.Advisory
+	for _, a := range f.byID {
+		all = append(all, *a)
+	}
+
+	return all
+}
+
+// closedAsDuplicate puts GHSA-orig and its duplicate GHSA-dup on a board of issues, closes the issue of GHSA-dup
+// with reason and opens the board again, as the next run does.
+func closedAsDuplicate(t *testing.T, reason string, duplicateOf string) (*boardtest.Project, *Board) {
+	t.Helper()
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "acme/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-orig", Summary: "s", State: "triage", CreatedAt: reported}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "s", State: "triage", CreatedAt: reported.AddDate(0, 0, 1)}, Duplicate, &Triage{DuplicateOf: duplicateOf}, ""))
+	issue := p.IssueOf(p.Find("GHSA-dup"))
+	issue.State, issue.StateReason = "closed", reason
+	b, err = Open(t.Context(), p, p, "acme/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+
+	return p, b
+}
+
+func newAdvisories(original github.Advisory) *advisories {
+	dup := github.Advisory{GHSAID: "GHSA-dup", State: "triage"}
+	dup.Author.Login = "bob"
+
+	return &advisories{byID: map[string]*github.Advisory{"GHSA-orig": &original, "GHSA-dup": &dup}, comments: map[string][]string{}}
+}
+
+func TestCloseDuplicatesClosesTheReportAndCreditsItsReporterOnTheOriginal(t *testing.T) {
+	carol := github.Credit{Login: "carol", Type: "analyst"}
+	for name, tc := range map[string]struct {
+		state, author string
+		credits       []github.Credit
+		want          []github.Credit
+		comment, note string
+	}{
+		"original in triage": {"triage", "alice", []github.Credit{carol}, []github.Credit{carol, {Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"original in draft":  {"draft", "alice", nil, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"already credited":   {"triage", "alice", []github.Credit{{Login: "Bob", Type: "finder"}}, []github.Credit{{Login: "Bob", Type: "finder"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"same reporter":      {"triage", "bob", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+		"original published": {"published", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+		"original closed":    {"closed", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+			original := github.Advisory{GHSAID: "GHSA-orig", State: tc.state, Credits: tc.credits}
+			original.Author.Login = tc.author
+			f := newAdvisories(original)
+
+			require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+
+			require.Equal(t, tc.want, f.byID["GHSA-orig"].Credits)
+			require.Equal(t, tc.state, f.byID["GHSA-orig"].State, "the original changed state")
+			require.Equal(t, "closed", f.byID["GHSA-dup"].State)
+			require.Equal(t, []string{tc.comment}, f.comments["GHSA-dup"])
+			require.Empty(t, f.comments["GHSA-orig"])
+			require.Equal(t, []string{tc.note}, p.IssueOf(p.Find("GHSA-dup")).Comments)
+			require.Empty(t, p.IssueOf(p.Find("GHSA-orig")).Comments)
+		})
+	}
+}
+
+func TestCloseDuplicatesCreditsTheOldestReportOfTheChain(t *testing.T) {
+	p, b := closedAsDuplicate(t, "duplicate", "GHSA-mid")
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-mid", Summary: "s", State: "triage", CreatedAt: reported}, Duplicate, &Triage{DuplicateOf: "GHSA-orig"}, ""))
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+	f.byID["GHSA-mid"] = &github.Advisory{GHSAID: "GHSA-mid", State: "triage"}
+
+	require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+
+	require.Equal(t, []github.Credit{{Login: "bob", Type: "reporter"}}, f.byID["GHSA-orig"].Credits)
+	require.Empty(t, f.byID["GHSA-mid"].Credits, "the reporter was credited on an intermediate duplicate")
+	require.Equal(t, "closed", f.byID["GHSA-dup"].State)
+	require.Equal(t, "triage", f.byID["GHSA-mid"].State)
+	require.Equal(t, "open", p.IssueOf(p.Find("GHSA-mid")).State)
+}
+
+func TestCloseDuplicatesLeavesTheOtherReportsAlone(t *testing.T) {
+	for name, tc := range map[string]struct {
+		reason, duplicateOf, state string
+	}{
+		"issue open":             {"", "GHSA-orig", "triage"},
+		"issue closed otherwise": {"not_planned", "GHSA-orig", "triage"},
+		"no original":            {"duplicate", "", "triage"},
+		"original is itself":     {"duplicate", "GHSA-dup", "triage"},
+		"advisory decided":       {"duplicate", "GHSA-orig", "published"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, b := closedAsDuplicate(t, tc.reason, tc.duplicateOf)
+			if tc.reason == "" {
+				p.IssueOf(p.Find("GHSA-dup")).State = "open"
+				var err error
+				b, err = Open(t.Context(), p, p, "acme/16", "acme/private-issues", "php/php-src")
+				require.NoError(t, err)
+			}
+			f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+			f.byID["GHSA-dup"].State = tc.state
+
+			require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+
+			require.Zero(t, f.updates)
+			require.Empty(t, f.comments)
+		})
+	}
+}
+
+func TestCloseDuplicatesKeepsTheReportOpenUntilItsCommentIsPosted(t *testing.T) {
+	_, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+	f.postErr = errors.New("HTTP 502")
+
+	require.Error(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+	require.Equal(t, "triage", f.byID["GHSA-dup"].State, "a report was closed without telling its reporter")
+
+	f.postErr = nil
+	require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+	require.Equal(t, "closed", f.byID["GHSA-dup"].State)
+	require.Equal(t, []github.Credit{{Login: "bob", Type: "reporter"}}, f.byID["GHSA-orig"].Credits, "the reporter was credited twice")
+	require.Len(t, f.comments["GHSA-dup"], 1)
+}
+
+func TestCloseDuplicatesPostsItsCommentOnceWhenTheCloseFails(t *testing.T) {
+	_, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+	f.closeErr = errors.New("HTTP 502")
+
+	dup := func(list []github.Advisory) github.Advisory {
+		return list[slices.IndexFunc(list, func(a github.Advisory) bool { return a.GHSAID == "GHSA-dup" })]
+	}
+	for range 2 {
+		list := f.list()
+		require.Error(t, b.CloseDuplicates(t.Context(), f, "php/php-src", list))
+		require.Equal(t, "triage", f.byID["GHSA-dup"].State)
+		require.Equal(t, "triage", dup(list).State, "a report that stayed open was marked closed")
+	}
+	require.Len(t, f.comments["GHSA-dup"], 1, "the comment was posted again")
+
+	f.closeErr = nil
+	list := f.list()
+	require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", list))
+	require.Equal(t, "closed", f.byID["GHSA-dup"].State)
+	require.Len(t, f.comments["GHSA-dup"], 1)
+	require.Equal(t, "closed", dup(list).State, "the following Sync would see the report still in triage")
+}
+
+func TestCloseDuplicatesLeavesALoopOfDuplicatesAlone(t *testing.T) {
+	_, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-orig", Summary: "s", State: "triage", CreatedAt: reported}, Duplicate, &Triage{DuplicateOf: "GHSA-dup"}, ""))
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+
+	require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+
+	require.Zero(t, f.updates)
+	require.Empty(t, f.comments)
+}
+
+func TestCloseDuplicatesReportsAFailedNoteOnceTheReportIsClosed(t *testing.T) {
+	p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+	p.IssueErr = errors.New("HTTP 502")
+	all := f.list()
+
+	require.ErrorContains(t, b.CloseDuplicates(t.Context(), f, "php/php-src", all), "HTTP 502")
+
+	require.Equal(t, "closed", f.byID["GHSA-dup"].State)
+	require.True(t, slices.ContainsFunc(all, func(a github.Advisory) bool { return a.GHSAID == "GHSA-dup" && a.State == "closed" }), "the Sync that follows sees the report in triage")
+	require.Empty(t, p.IssueOf(p.Find("GHSA-dup")).Comments)
+}
+
+func TestCloseDuplicatesReportsAMissingOriginal(t *testing.T) {
+	_, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig"})
+	delete(f.byID, "GHSA-orig")
+
+	require.ErrorIs(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()), github.ErrNotFound)
+	require.Equal(t, "triage", f.byID["GHSA-dup"].State)
+	require.Empty(t, f.comments)
+}
+
+func TestSyncKeepsTheIssueOfAClosedDuplicateClosedAsSuch(t *testing.T) {
+	p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-orig", State: "closed"}, {GHSAID: "GHSA-dup", State: "closed"}}))
+
+	require.Equal(t, "duplicate", p.IssueOf(p.Find("GHSA-dup")).StateReason)
+	require.Equal(t, "closed", p.Value(p.Find("GHSA-dup"), "State"))
+	require.Equal(t, "not_planned", p.IssueOf(p.Find("GHSA-orig")).StateReason)
 }

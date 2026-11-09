@@ -59,6 +59,12 @@ type Advisory struct {
 	Author      struct {
 		Login string `json:"login"`
 	} `json:"author"`
+	Credits []Credit `json:"credits"`
+}
+
+type Credit struct {
+	Login string `json:"login"`
+	Type  string `json:"type"`
 }
 
 type Issue struct {
@@ -67,6 +73,7 @@ type Issue struct {
 	Title       string    `json:"title"`
 	Body        string    `json:"body"`
 	State       string    `json:"state"`
+	StateReason string    `json:"state_reason"`
 	HTMLURL     string    `json:"html_url"`
 	PullRequest *struct{} `json:"pull_request"`
 }
@@ -113,6 +120,14 @@ func (c *Client) ListAdvisories(ctx context.Context, repo, state string) ([]Advi
 	}
 
 	return list[Advisory](ctx, c, fmt.Sprintf("%s/repos/%s/security-advisories?%s", c.BaseURL, repo, q.Encode()))
+}
+
+// UpdateAdvisory sets the given fields of an advisory, such as "state" or "credits". GitHub asks for the whole
+// list of credits, the ones already there included.
+func (c *Client) UpdateAdvisory(ctx context.Context, repo, ghsa string, fields map[string]any) error {
+	_, err := c.do(ctx, http.MethodPatch, fmt.Sprintf("%s/repos/%s/security-advisories/%s", c.BaseURL, repo, url.PathEscape(ghsa)), fields, nil)
+
+	return err
 }
 
 // ListComments relies on the advisory comments API, in public preview since 2026-10-02.

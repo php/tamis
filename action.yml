@@ -48,6 +48,9 @@ inputs:
   issues-token:
     description: GitHub App installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. tamis refuses it when it also reaches `repository`, so a bug cannot publish a report there.
     required: false
+  close-duplicates:
+    description: Close the advisory of an issue a maintainer closed as a duplicate, credit its reporter on the original report and tell them on the closed advisory. Needs `issues-repository`.
+    default: "false"
   comment:
     description: Post the triage as a comment on the advisory. Off by default, every triage then only reaches `project`, which must be set.
     default: "false"
@@ -143,6 +146,7 @@ runs:
         PROJECT: ${{ inputs.project }}
         ISSUES_REPOSITORY: ${{ inputs.issues-repository }}
         ISSUES_TOKEN: ${{ inputs.issues-token }}
+        CLOSE_DUPLICATES: ${{ inputs.close-duplicates }}
         COMMENT: ${{ inputs.comment }}
         PACKS: ${{ inputs.packs }}
     - name: Store private reports

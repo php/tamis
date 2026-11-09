@@ -205,6 +205,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		cfg.Issues = github.New(issues)
 	}
+	if v := os.Getenv("CLOSE_DUPLICATES"); v != "" {
+		if cfg.CloseDuplicates, err = strconv.ParseBool(v); err != nil {
+			return fmt.Errorf("CLOSE_DUPLICATES: %w", err)
+		}
+	}
+	// Only an issue carries the decision of a maintainer, a draft item has no close reason.
+	if cfg.CloseDuplicates && cfg.IssuesRepository == "" {
+		return errors.New("CLOSE_DUPLICATES needs ISSUES_REPOSITORY")
+	}
 	eng, agent, model, err := newEngine(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
 	if err != nil {
 		return err

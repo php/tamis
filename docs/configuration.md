@@ -20,11 +20,12 @@
 | `project` | | Private organisation project kept in sync with the advisories, as `org/number`. See [the project board](setup.md#5-project-board). |
 | `issues-repository` | | Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. See [the project board](setup.md#5-project-board). |
 | `issues-token` | | Installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. Required with `issues-repository`. |
+| `close-duplicates` | `false` | Closes the advisory of an issue a maintainer closed as a duplicate. Needs `issues-repository`. See [the project board](setup.md#5-project-board). |
 | `runner-image` | tamis agent image, pinned by digest | Image the agent runs in. It must contain the agent CLI, git, curl and `harness-proxy`. The action skips the attestation check for a custom image. |
 
 The action refuses to run from a public workflow repository or from a `uses:` that is not a full commit SHA. Update that SHA through a reviewed pull request.
 
-Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN`, `COMMENT` and `PACKS`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
+Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN`, `CLOSE_DUPLICATES`, `COMMENT` and `PACKS`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
 
 A local run alone also reads `FORCE=true`, which triages every selected advisory again, `ADVISORY` alone or every one in triage, and updates its board item even when it already holds a triage. It needs `COMMENT` off, and a failed new triage leaves the previous one on the board. The action has no such input.
 
