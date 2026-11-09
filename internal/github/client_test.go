@@ -212,6 +212,9 @@ func TestIssues(t *testing.T) {
 			fmt.Fprint(w, `{"id":42,"number":7}`)
 		case "PATCH /repos/acme/private-issues/issues/7":
 			assert.Equal(t, map[string]any{"state": "closed", "state_reason": "completed"}, body)
+		case "POST /repos/acme/private-issues/issues/7/comments":
+			assert.Equal(t, map[string]any{"body": "c"}, body)
+			w.WriteHeader(http.StatusCreated)
 		case "DELETE /repos/acme/private-issues/issues/3/sub_issue":
 			assert.Equal(t, map[string]any{"sub_issue_id": float64(42)}, body)
 		case "POST /repos/acme/private-issues/issues/3/sub_issues":
@@ -240,6 +243,7 @@ func TestIssues(t *testing.T) {
 	require.Equal(t, int64(42), issue.ID)
 	require.Equal(t, 7, issue.Number)
 	require.NoError(t, c.UpdateIssue(context.Background(), "acme/private-issues", 7, map[string]string{"state": "closed", "state_reason": "completed"}))
+	require.NoError(t, c.CommentIssue(context.Background(), "acme/private-issues", 7, "c"))
 	require.NoError(t, c.AddSubIssue(context.Background(), "acme/private-issues", 3, 42))
 	require.NoError(t, c.RemoveSubIssue(context.Background(), "acme/private-issues", 3, 42))
 	item, err := c.AddProjectIssue(context.Background(), "php", 16, 42)

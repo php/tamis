@@ -717,6 +717,7 @@ func TestSyncTakesOutAReportThatIsNoLongerADuplicate(t *testing.T) {
 	p.IssueErr = nil
 	require.NoError(t, b.Sync(t.Context(), nil))
 	require.Zero(t, dup.Parent, "a report cleared by hand stayed nested")
+	require.Empty(t, dup.Comments, "a report that is no longer a duplicate got a note")
 }
 
 func TestSyncGathersTheDuplicatesOfAClosedOriginalUnderTheOldestOfThem(t *testing.T) {
@@ -746,6 +747,52 @@ func TestSyncGathersTheDuplicatesOfAClosedOriginalUnderTheOldestOfThem(t *testin
 	writes := p.Writes
 	require.NoError(t, b.Sync(t.Context(), nil))
 	require.Equal(t, writes, p.Writes, "a nested group was written again")
+}
+
+func TestSyncTakesTheDuplicatesOutOfAnOriginalThatLeftTriage(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	put := func(g, state, dup string, day int) {
+		a := github.Advisory{GHSAID: g, Summary: g, State: state, CreatedAt: reported.AddDate(0, 0, day)}
+		require.NoError(t, b.Put(t.Context(), a, Duplicate, &Triage{DuplicateOf: dup}, ""))
+	}
+	put("GHSA-root", "triage", "", -2)
+	put("GHSA-gone", "closed", "GHSA-root", -1)
+	put("GHSA-first", "triage", "GHSA-root", 0)
+	put("GHSA-later", "triage", "GHSA-root", 1)
+	require.NoError(t, b.Sync(t.Context(), nil))
+	root, gone, first, later := p.IssueOf(p.Find("GHSA-root")), p.IssueOf(p.Find("GHSA-gone")), p.IssueOf(p.Find("GHSA-first")), p.IssueOf(p.Find("GHSA-later"))
+	require.Equal(t, int(root.ID-1000), gone.Parent)
+	require.Equal(t, int(root.ID-1000), first.Parent)
+	require.Equal(t, int(root.ID-1000), later.Parent)
+
+	closed := []github.Advisory{{GHSAID: "GHSA-root", State: "published"}, {GHSAID: "GHSA-gone", State: "closed"}, {GHSAID: "GHSA-first", State: "triage"}, {GHSAID: "GHSA-later", State: "draft"}}
+	p.IssueErr = errors.New("HTTP 502")
+	require.Error(t, b.Sync(t.Context(), closed))
+	require.Equal(t, int(root.ID-1000), later.Parent, "a failed link changed the parent")
+	require.Equal(t, int(root.ID-1000), first.Parent, "a failed note let the issue leave its original")
+	require.Empty(t, first.Comments)
+
+	p.IssueErr = nil
+	require.NoError(t, b.Sync(t.Context(), closed))
+	require.Zero(t, first.Parent, "the oldest waiting duplicate stayed under its published original")
+	require.Equal(t, int(first.ID-1000), later.Parent, "the duplicate is not under the oldest waiting one")
+	require.Equal(t, "GHSA-root", p.Value(p.Find("GHSA-later"), "Original report"))
+	require.Equal(t, int(root.ID-1000), gone.Parent, "a closed duplicate left its published original")
+	require.Empty(t, gone.Comments, "a closed duplicate got a note")
+	require.Equal(t, "1", p.Value(p.Find("GHSA-root"), "Duplicates"), "the published original kept the count of its waiting duplicates")
+	require.Equal(t, "1", p.Value(p.Find("GHSA-first"), "Duplicates"))
+	require.Len(t, first.Comments, 1, "the new head of the group got no note")
+	require.Contains(t, first.Comments[0], "GHSA-root")
+	require.Contains(t, first.Comments[0], "published")
+	require.Empty(t, later.Comments, "a duplicate that only changed parent got a note")
+	require.NoError(t, b.Sync(t.Context(), closed))
+	require.Len(t, first.Comments, 1, "the note was posted again")
+
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-root", State: "triage"}}))
+	require.Equal(t, int(root.ID-1000), first.Parent, "a duplicate stayed out of its original back in triage")
+	require.Equal(t, int(root.ID-1000), later.Parent)
 }
 
 func TestSyncCountsTheSubIssuesOfEachIssue(t *testing.T) {

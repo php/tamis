@@ -557,6 +557,12 @@ func (c *Client) UpdateIssue(ctx context.Context, repo string, number int, field
 	return err
 }
 
+func (c *Client) CommentIssue(ctx context.Context, repo string, number int, body string) error {
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/issues/%d/comments", c.BaseURL, repo, number), map[string]string{"body": body}, nil)
+
+	return err
+}
+
 // AddSubIssue makes the issue child a sub-issue of parent, moving it from any other parent.
 func (c *Client) AddSubIssue(ctx context.Context, repo string, parent int, child int64) error {
 	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/repos/%s/issues/%d/sub_issues", c.BaseURL, repo, parent), map[string]any{"sub_issue_id": child, "replace_parent": true}, nil)

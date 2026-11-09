@@ -126,6 +126,7 @@ type Issues interface {
 	ListIssues(ctx context.Context, repo string) ([]github.Issue, error)
 	CreateIssue(ctx context.Context, repo, title, body string) (github.Issue, error)
 	UpdateIssue(ctx context.Context, repo string, number int, fields map[string]string) error
+	CommentIssue(ctx context.Context, repo string, number int, body string) error
 	AddSubIssue(ctx context.Context, repo string, parent int, child int64) error
 	RemoveSubIssue(ctx context.Context, repo string, parent int, child int64) error
 	// AddProjectIssue needs a token that sees the issue, which the token of the advisories does not.
@@ -569,17 +570,17 @@ func (b *Board) issueItem(id int64) *item {
 	return nil
 }
 
-// nest returns the item the issue of it goes under: the oldest report of its Duplicate of chain that has an issue.
-// When none has, as for the duplicates of an original closed before the board, the reports of the group gather
-// under the oldest of them that has an issue, and nil means it is that one.
-func (b *Board) nest(it *item) *item {
-	if parent := b.ancestor(it); parent != nil || it.duplicateOf == "" {
+// nest returns the item the issue of it goes under: the oldest report of its Duplicate of chain that has an issue
+// and waits for a decision. When none has, as for the duplicates of a closed original, the reports of the group
+// gather under the oldest of them that has an issue and waits, and nil means it is that one.
+func (b *Board) nest(it *item, states map[string]string) *item {
+	if parent := b.ancestor(it, states); parent != nil || it.duplicateOf == "" {
 		return parent
 	}
 	group := strings.ToLower(b.oldest(it.duplicateOf))
 	head := it
 	for _, other := range b.items {
-		if other.issue == 0 || other.duplicateOf == "" || b.ancestor(other) != nil || strings.ToLower(b.oldest(other.duplicateOf)) != group {
+		if other.issue == 0 || other.duplicateOf == "" || !waiting(other, states) || b.ancestor(other, states) != nil || strings.ToLower(b.oldest(other.duplicateOf)) != group {
 			continue
 		}
 		if other.reported < head.reported || other.reported == head.reported && strings.ToLower(other.ghsa) < strings.ToLower(head.ghsa) {
@@ -593,9 +594,11 @@ func (b *Board) nest(it *item) *item {
 	return head
 }
 
-// ancestor returns the oldest report of the Duplicate of chain of it that has an issue, nil when none has.
-func (b *Board) ancestor(it *item) *item {
+// ancestor returns the oldest report of the Duplicate of chain of it that has an issue and waits for a decision,
+// nil when none has. A report that no longer waits itself stays under the oldest that has an issue.
+func (b *Board) ancestor(it *item, states map[string]string) *item {
 	var parent *item
+	decided := !waiting(it, states)
 	seen := map[*item]bool{it: true}
 	for ghsa := it.duplicateOf; ghsa != ""; {
 		next := b.items[strings.ToLower(ghsa)]
@@ -603,13 +606,29 @@ func (b *Board) ancestor(it *item) *item {
 			break
 		}
 		seen[next] = true
-		if next.issue != 0 {
+		if next.issue != 0 && (decided || waiting(next, states)) {
 			parent = next
 		}
 		ghsa = next.duplicateOf
 	}
 
 	return parent
+}
+
+// stateOf returns the state of the advisory of it, the one Sync received when it has one.
+func stateOf(it *item, states map[string]string) string {
+	if state, ok := states[strings.ToLower(it.ghsa)]; ok {
+		return state
+	}
+
+	return it.state
+}
+
+// waiting tells whether the advisory of it waits for a decision.
+func waiting(it *item, states map[string]string) bool {
+	state := stateOf(it, states)
+
+	return state == "triage" || state == "draft"
 }
 
 // option sets a single select field, or clears it when the value has no option.
@@ -637,7 +656,7 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		case b.issues == "" && it.duplicateOf != "":
 			counts[strings.ToLower(it.duplicateOf)]++
 		case b.issues != "" && it.issue != 0:
-			if parent := b.nest(it); parent != nil {
+			if parent := b.nest(it, states); parent != nil {
 				counts[strings.ToLower(parent.ghsa)]++
 			}
 		}
@@ -673,7 +692,7 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		}
 		// The group is only written once the sub-issue is linked, so a failed link is tried again next run.
 		// The group can predate the issue of its original, so the link follows the parent the issue has.
-		if parent := b.nest(it); it.issue != 0 && parent != nil && it.parent != parent.issueID {
+		if parent := b.nest(it, states); it.issue != 0 && parent != nil && it.parent != parent.issueID {
 			if err := b.ig.AddSubIssue(ctx, b.issues, parent.issue, it.issueID); err != nil {
 				errs = append(errs, err)
 				group = it.group
@@ -681,9 +700,18 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 				it.parent = parent.issueID
 			}
 		} else if it.issue != 0 && parent == nil && it.parent != 0 {
-			// A report that is no longer a duplicate leaves the issue it was nested under, when that one is known.
+			// A report that is no longer a duplicate, or now heads a group whose original left triage, leaves the issue
+			// it was nested under, when that one is known. The note on this issue comes first, so a failed one is
+			// posted again next run.
 			if old := b.issueItem(it.parent); old != nil {
-				if err := b.ig.RemoveSubIssue(ctx, b.issues, old.issue, it.issueID); err != nil {
+				var err error
+				if it.duplicateOf != "" && waiting(it, states) && !waiting(old, states) {
+					err = b.ig.CommentIssue(ctx, b.issues, it.issue, fmt.Sprintf("%s, the report this issue was a sub-issue of, is now %s. The duplicates of its group still in triage or draft gather under the oldest of them, this issue.", old.ghsa, stateOf(old, states)))
+				}
+				if err == nil {
+					err = b.ig.RemoveSubIssue(ctx, b.issues, old.issue, it.issueID)
+				}
+				if err != nil {
 					errs = append(errs, err)
 				} else {
 					it.parent = 0
