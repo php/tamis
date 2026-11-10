@@ -712,7 +712,7 @@ func TestRunTriagesEveryNewAdvisoryWithinItsTime(t *testing.T) {
 
 func TestRunLeavesTheAdvisoriesToTheNextRunOnceItsTimeIsSpent(t *testing.T) {
 	defer func(d time.Duration) { maxRunDuration = d }(maxRunDuration)
-	maxRunDuration = maxAdvisoryDuration
+	maxRunDuration = maxAdvisoryDuration - time.Second
 	gh, eng := newFixture(), &fakeEngine{}
 	var logs strings.Builder
 
