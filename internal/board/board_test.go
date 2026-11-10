@@ -950,12 +950,13 @@ func TestCloseDuplicatesClosesTheReportAndCreditsItsReporterOnTheOriginal(t *tes
 		want          []github.Credit
 		comment, note string
 	}{
-		"original in triage": {"triage", "alice", []github.Credit{carol}, []github.Credit{carol, {Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
-		"original in draft":  {"draft", "alice", nil, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
-		"already credited":   {"triage", "alice", []github.Credit{{Login: "Bob", Type: "finder"}}, []github.Credit{{Login: "Bob", Type: "finder"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
-		"same reporter":      {"triage", "bob", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
-		"original published": {"published", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
-		"original closed":    {"closed", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+		"original in triage":                         {"triage", "alice", []github.Credit{carol}, []github.Credit{carol, {Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"original in draft":                          {"draft", "alice", nil, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"already credited":                           {"triage", "alice", []github.Credit{{Login: "Bob", Type: "finder"}}, []github.Credit{{Login: "Bob", Type: "finder"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"same reporter":                              {"triage", "bob", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+		"original published":                         {"published", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+		"original closed":                            {"closed", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
+		"credited before the original was published": {"published", "alice", []github.Credit{{Login: "bob", Type: "reporter"}}, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
@@ -972,6 +973,22 @@ func TestCloseDuplicatesClosesTheReportAndCreditsItsReporterOnTheOriginal(t *tes
 			require.Empty(t, f.comments["GHSA-orig"])
 			require.Equal(t, []string{tc.note}, p.IssueOf(p.Find("GHSA-dup")).Comments)
 			require.Empty(t, p.IssueOf(p.Find("GHSA-orig")).Comments)
+		})
+	}
+}
+
+// The issue a maintainer closed as a duplicate keeps that reason when a triage puts its closed advisory again,
+// and an issue closed for another reason follows its advisory.
+func TestPutKeepsTheReasonOfAnIssueClosedAsADuplicate(t *testing.T) {
+	for reason, want := range map[string]string{"duplicate": "duplicate", "completed": "not_planned"} {
+		t.Run(reason, func(t *testing.T) {
+			p, b := closedAsDuplicate(t, reason, "GHSA-orig")
+
+			require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "s", State: "closed", CreatedAt: reported}, Duplicate, &Triage{DuplicateOf: "GHSA-orig"}, ""))
+
+			issue := p.IssueOf(p.Find("GHSA-dup"))
+			require.Equal(t, "closed", issue.State)
+			require.Equal(t, want, issue.StateReason)
 		})
 	}
 }

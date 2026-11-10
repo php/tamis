@@ -474,7 +474,7 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		}
 	}
 	// Sync compares the advisory with the state written below, so it would leave the issue as it is.
-	if it.issue != 0 && it.state != "" && it.state != a.State {
+	if it.issue != 0 && it.closedAs != "duplicate" && it.state != "" && it.state != a.State {
 		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, issueState(a.State)); err != nil {
 			return err
 		}
@@ -673,7 +673,8 @@ func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string,
 		}
 		// A Duplicate of chain edited by hand into a loop has no oldest report, the one it stops at names another.
 		original := b.oldest(it.duplicateOf)
-		if o := b.items[strings.ToLower(original)]; o != nil && o.duplicateOf != "" {
+		o := b.items[strings.ToLower(original)]
+		if o != nil && o.duplicateOf != "" {
 			continue
 		}
 		credited, err := closeDuplicate(ctx, gh, repo, a, original)
@@ -684,7 +685,7 @@ func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string,
 		advisories[i].State = "closed"
 		// The note comes after the close, so a close that fails again next run never posts it twice.
 		note := fmt.Sprintf("Closed %s as a duplicate of %s", a.GHSAID, original)
-		if o := b.items[strings.ToLower(original)]; o != nil && o.issue != 0 {
+		if o != nil && o.issue != 0 {
 			note += fmt.Sprintf(" (#%d)", o.issue)
 		}
 		// A login in backticks notifies nobody.
@@ -708,16 +709,23 @@ func closeDuplicate(ctx context.Context, gh Advisories, repo string, a github.Ad
 		return "", err
 	}
 	comment := fmt.Sprintf("This report is closed as a duplicate of %s, reported earlier.", o.GHSAID)
+	// A credit added by a run whose close failed keeps its sentence once the original leaves triage, so the comment
+	// still matches the one already posted.
 	credited := ""
-	if login := a.Author.Login; login != "" && !strings.EqualFold(login, o.Author.Login) && (o.State == "triage" || o.State == "draft") {
-		if !slices.ContainsFunc(o.Credits, func(c github.Credit) bool { return strings.EqualFold(c.Login, login) }) {
-			credits := append(o.Credits, github.Credit{Login: login, Type: "reporter"})
-			if err := gh.UpdateAdvisory(ctx, repo, o.GHSAID, map[string]any{"credits": credits}); err != nil {
-				return "", err
-			}
-		}
-		comment += " You are credited on it as a reporter."
+	login := a.Author.Login
+	switch {
+	case login == "":
+	case slices.ContainsFunc(o.Credits, func(c github.Credit) bool { return strings.EqualFold(c.Login, login) }):
 		credited = login
+	case !strings.EqualFold(login, o.Author.Login) && (o.State == "triage" || o.State == "draft"):
+		credits := append(o.Credits, github.Credit{Login: login, Type: "reporter"})
+		if err := gh.UpdateAdvisory(ctx, repo, o.GHSAID, map[string]any{"credits": credits}); err != nil {
+			return "", err
+		}
+		credited = login
+	}
+	if credited != "" {
+		comment += " You are credited on it as a reporter."
 	}
 	comments, err := gh.ListComments(ctx, repo, a.GHSAID)
 	if err != nil {
