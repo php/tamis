@@ -936,7 +936,7 @@ func closedAsDuplicate(t *testing.T, reason string, duplicateOf string) (*boardt
 }
 
 func newAdvisories(original github.Advisory) *advisories {
-	dup := github.Advisory{GHSAID: "GHSA-dup", State: "triage"}
+	dup := github.Advisory{GHSAID: "GHSA-dup", HTMLURL: "https://x/GHSA-dup", State: "triage"}
 	dup.Author.Login = "bob"
 
 	return &advisories{byID: map[string]*github.Advisory{"GHSA-orig": &original, "GHSA-dup": &dup}, comments: map[string][]string{}}
@@ -950,17 +950,17 @@ func TestCloseDuplicatesClosesTheReportAndCreditsItsReporterOnTheOriginal(t *tes
 		want          []github.Credit
 		comment, note string
 	}{
-		"original in triage":                         {"triage", "alice", []github.Credit{carol}, []github.Credit{carol, {Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
-		"original in draft":                          {"draft", "alice", nil, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
-		"already credited":                           {"triage", "alice", []github.Credit{{Login: "Bob", Type: "finder"}}, []github.Credit{{Login: "Bob", Type: "finder"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
-		"same reporter":                              {"triage", "bob", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
-		"original published":                         {"published", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
-		"original closed":                            {"closed", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1)."},
-		"credited before the original was published": {"published", "alice", []github.Credit{{Login: "bob", Type: "reporter"}}, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed GHSA-dup as a duplicate of GHSA-orig (#1), where `bob` is credited as a reporter."},
+		"original in triage":                         {"triage", "alice", []github.Credit{carol}, []github.Credit{carol, {Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1), where `bob` has been credited as a reporter."},
+		"original in draft":                          {"draft", "alice", nil, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1), where `bob` has been credited as a reporter."},
+		"already credited":                           {"triage", "alice", []github.Credit{{Login: "Bob", Type: "finder"}}, []github.Credit{{Login: "Bob", Type: "finder"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1), where `bob` has been credited as a reporter."},
+		"same reporter":                              {"triage", "bob", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1)."},
+		"original published":                         {"published", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1)."},
+		"original closed":                            {"closed", "alice", nil, nil, "This report is closed as a duplicate of GHSA-orig, reported earlier.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1)."},
+		"credited before the original was published": {"published", "alice", []github.Credit{{Login: "bob", Type: "reporter"}}, []github.Credit{{Login: "bob", Type: "reporter"}}, "This report is closed as a duplicate of GHSA-orig, reported earlier. You are credited on it as a reporter.", "Closed [GHSA-dup](https://x/GHSA-dup) as a duplicate of [GHSA-orig](https://x/GHSA-orig) (#1), where `bob` has been credited as a reporter."},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
-			original := github.Advisory{GHSAID: "GHSA-orig", State: tc.state, Credits: tc.credits}
+			original := github.Advisory{GHSAID: "GHSA-orig", HTMLURL: "https://x/GHSA-orig", State: tc.state, Credits: tc.credits}
 			original.Author.Login = tc.author
 			f := newAdvisories(original)
 
