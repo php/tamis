@@ -269,7 +269,7 @@ func (p *Project) CreateIssue(_ context.Context, repo, title, body string) (gith
 	n := len(p.Issues) + 1
 	p.Issues[n] = &Issue{ID: int64(1000 + n), Repo: repo, Title: title, Body: body, State: "open"}
 
-	return github.Issue{ID: int64(1000 + n), Number: n}, nil
+	return github.Issue{ID: int64(1000 + n), Number: n, HTMLURL: fmt.Sprintf("https://github.com/%s/issues/%d", repo, n)}, nil
 }
 
 func (p *Project) UpdateIssue(_ context.Context, repo string, number int, fields map[string]string) error {

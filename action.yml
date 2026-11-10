@@ -52,7 +52,7 @@ inputs:
     description: Close the advisory of an issue a maintainer closed as a duplicate, credit its reporter on the original report and tell them on the closed advisory. Needs `issues-repository`.
     default: "false"
   comment:
-    description: Post the triage as a comment on the advisory. Off by default, every triage then only reaches `project`, which must be set.
+    description: Post the triage as a comment on the advisory, and with `issues-repository` the link to each issue tamis creates. Off by default, every triage then only reaches `project`, which must be set.
     default: "false"
   references:
     description: Whitespace-separated local git references, including each supported release branch. The first is analysed, and the cited code is located on it. All must have been fetched.

@@ -290,6 +290,12 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		triaged++
 	}
 
+	if b != nil && !cfg.NoComment {
+		if err := b.LinkIssues(ctx, gh, cfg.Repo); err != nil {
+			log.Error("linking the issues on their advisories failed", "reason", describe(err))
+			boardErr = errors.Join(boardErr, errors.New("linking the issues: "+describe(err)))
+		}
+	}
 	if b != nil {
 		if err := b.Sync(ctx, all); err != nil {
 			log.Error("syncing the project board failed", "reason", describe(err))
