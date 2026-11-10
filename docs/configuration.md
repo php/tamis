@@ -6,7 +6,7 @@
 |---|---|---|
 | `api-key` | | Required. API key of the model provider, or a Codex access token with `engine: openai`. |
 | `github-token` | | Required. Token able to read and comment the repository advisories. |
-| `references` | | Required, at most ten. Whitespace-separated local git references, one per supported branch. tamis analyses the first and locates the cited code on all of them. A missing reference fails the analysis. |
+| `references` | | Required, at most ten. Whitespace-separated local git references, one per supported branch. tamis analyses the first and locates the cited code on it. A missing reference fails the analysis. |
 | `packs` | | Whitespace-separated [guidance packs](#guidance-packs) added to the agent's method, such as `php-src`. An unknown pack fails the run. |
 | `since` | | Triage only advisories created after this date, `2026-10-22` or RFC 3339. Required with `comment: true` unless `advisory` is set. Without it, every advisory in triage goes on the board. |
 | `advisory` | | Triage this GHSA only, whatever its state and creation date. |
@@ -33,7 +33,7 @@ A local run alone also reads `FORCE=true`, which triages every selected advisory
 
 Fetch the references with `fetch-depth: 0`. For php-src, list the default branch and each PHP branch your disclosure policy covers, such as `master origin/PHP-8.4`, and update the list as releases enter or leave support.
 
-tamis analyses each reference on its own and records its exact commit in both copies of the result. It does not guess the maintained branches from the reporter's prose, and it never executes the source code.
+tamis analyses the first reference and records the exact commit of each in both copies of the result. It does not guess the maintained branches from the reporter's prose, and it never executes the source code.
 
 ## Private reports
 
@@ -42,7 +42,7 @@ The private artifact holds, per advisory:
 | File | Contents |
 |---|---|
 | `.md` | The full report, with every duplicate the global search proposed and any duplicate search or confirmation that could not complete |
-| `.comment.md` | The text the reporter sees, limited to published duplicates and to the unpublished exact duplicates that passed the [one-candidate confirmation](how-it-works.md#3-duplicate-search) |
+| `.comment.md` | The text the reporter sees, limited to the published exact duplicates and to the unpublished exact duplicates that passed the [one-candidate confirmation](how-it-works.md#3-duplicate-search) |
 | `.agent-error.txt` | Written when an agent run fails. It keeps the agent's error output and the error events of its JSON output, which may quote the report. |
 
 Each report names the source commit and the input revision it covers.

@@ -86,8 +86,6 @@ type Report struct {
 	Removed int `json:"-"`
 	// Incomplete holds why the agent stopped before finishing the report it wrote.
 	Incomplete error `json:"-"`
-	// Elsewhere holds the code references located on the other source references.
-	Elsewhere []Report `json:"-"`
 	// Located says the faulty statement exists on the analysed source, as the duplicate search clues require.
 	Located bool `json:"-"`
 }
@@ -121,8 +119,8 @@ type Duplicate struct {
 // visible says whether the reporter may see d.
 func (d Duplicate) visible() bool {
 	// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
-	// unpublished advisory would reveal another report.
-	return d.Published || d.Confirmed && d.Exact && d.Confidence == "high"
+	// unpublished advisory would reveal another report, and the maintainers only act on exact ones.
+	return d.Exact && (d.Published || d.Confirmed && d.Confidence == "high")
 }
 
 type Related struct {
@@ -504,6 +502,10 @@ func abs(n int) int {
 // Render formats the report as the advisory comment.
 func Render(r Report) string {
 	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.visible() })
+	// A CVSS vector of the repository says little about a flaw of the bundled project.
+	if r.Upstream != "" {
+		r.CVSS = CVSS{}
+	}
 	return RenderPrivate(r)
 }
 
@@ -523,7 +525,7 @@ func RenderPrivate(r Report) string {
 		fmt.Fprintf(&b, "\nThe faulty code seems to come from `%s`, which the repository bundles, so the fix may belong upstream.\n", r.Upstream)
 	}
 
-	b.WriteString("\n#### Possible duplicates\n\n")
+	b.WriteString("\n#### Duplicates\n\n")
 	switch {
 	case r.DuplicateSearchFailed:
 		b.WriteString("The duplicate search could not complete.\n")
@@ -553,7 +555,7 @@ func RenderPrivate(r Report) string {
 		// No title: the reporter reads this comment, and other advisories may still be under embargo.
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, label(d.State), confidence)
 	}
-	b.WriteString("\n_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._\n")
+	b.WriteString("\n_The reporter-visible comment only lists exact duplicates, and unpublished ones after a separate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {
@@ -614,19 +616,14 @@ func RenderPrivate(r Report) string {
 	return b.String()
 }
 
-// cited formats the table of the code the report cites, with a column for each source it was located on.
+// cited formats the table of the code the report cites.
 func (r Report) cited() string {
 	if len(r.CodeReferences) == 0 {
 		return ""
 	}
-	sources := append([]Report{r}, r.Elsewhere...)
 	var b strings.Builder
-	b.WriteString("\n#### Code cited by the report\n\n| Cited |")
-	for _, s := range sources {
-		fmt.Fprintf(&b, " In the repository%s |", s.scope())
-	}
-	b.WriteString("\n|---|" + strings.Repeat("---|", len(sources)) + "\n")
-	for i, ref := range r.CodeReferences {
+	fmt.Fprintf(&b, "\n#### Code cited by the report\n\n| Cited | In the repository%s |\n|---|---|\n", r.scope())
+	for _, ref := range r.CodeReferences {
 		cited := ref.Path
 		if cited != "" && ref.Line > 0 {
 			cited += ":" + strconv.Itoa(ref.Line)
@@ -637,11 +634,7 @@ func (r Report) cited() string {
 				parts = append(parts, code(p))
 			}
 		}
-		fmt.Fprintf(&b, "| %s |", strings.Join(parts, " "))
-		for _, s := range sources {
-			fmt.Fprintf(&b, " %s |", s.where(s.CodeReferences[i]))
-		}
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(parts, " "), r.where(ref))
 	}
 
 	return b.String()
