@@ -678,20 +678,20 @@ func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string,
 		if o != nil && o.duplicateOf != "" {
 			continue
 		}
-		credited, err := closeDuplicate(ctx, gh, repo, a, original)
+		oa, credited, err := closeDuplicate(ctx, gh, repo, a, original)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("closing %s as a duplicate of %s: %w", a.GHSAID, original, err))
 			continue
 		}
 		advisories[i].State = "closed"
 		// The note comes after the close, so a close that fails again next run never posts it twice.
-		note := fmt.Sprintf("Closed %s as a duplicate of %s", a.GHSAID, original)
+		note := fmt.Sprintf("Closed [%s](%s) as a duplicate of [%s](%s)", a.GHSAID, a.HTMLURL, oa.GHSAID, oa.HTMLURL)
 		if o != nil && o.issue != 0 {
 			note += fmt.Sprintf(" (#%d)", o.issue)
 		}
 		// A login in backticks notifies nobody.
 		if credited != "" {
-			note += fmt.Sprintf(", where `%s` is credited as a reporter", credited)
+			note += fmt.Sprintf(", where `%s` has been credited as a reporter", credited)
 		}
 		if err := b.ig.CommentIssue(ctx, b.issues, it.issue, note+"."); err != nil {
 			errs = append(errs, fmt.Errorf("noting the close of %s on its issue: %w", a.GHSAID, err))
@@ -702,12 +702,12 @@ func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string,
 }
 
 // closeDuplicate comments before closing, since the next run leaves a closed advisory alone. A close that failed
-// after its comment finds that comment on the next run instead of posting it again. It returns the login
-// credited on the original, empty when the original credits nobody for it.
-func closeDuplicate(ctx context.Context, gh Advisories, repo string, a github.Advisory, original string) (string, error) {
+// after its comment finds that comment on the next run instead of posting it again. It returns the original and
+// the login credited on it, empty when the original credits nobody for it.
+func closeDuplicate(ctx context.Context, gh Advisories, repo string, a github.Advisory, original string) (github.Advisory, string, error) {
 	o, err := gh.GetAdvisory(ctx, repo, original)
 	if err != nil {
-		return "", err
+		return o, "", err
 	}
 	comment := fmt.Sprintf("This report is closed as a duplicate of %s, reported earlier.", o.GHSAID)
 	// A credit added by a run whose close failed keeps its sentence once the original leaves triage, so the comment
@@ -721,7 +721,7 @@ func closeDuplicate(ctx context.Context, gh Advisories, repo string, a github.Ad
 	case !strings.EqualFold(login, o.Author.Login) && (o.State == "triage" || o.State == "draft"):
 		credits := append(o.Credits, github.Credit{Login: login, Type: "reporter"})
 		if err := gh.UpdateAdvisory(ctx, repo, o.GHSAID, map[string]any{"credits": credits}); err != nil {
-			return "", err
+			return o, "", err
 		}
 		credited = login
 	}
@@ -730,15 +730,15 @@ func closeDuplicate(ctx context.Context, gh Advisories, repo string, a github.Ad
 	}
 	comments, err := gh.ListComments(ctx, repo, a.GHSAID)
 	if err != nil {
-		return "", err
+		return o, "", err
 	}
 	if !slices.ContainsFunc(comments, func(c github.Comment) bool { return c.Body == comment }) {
 		if err := gh.PostComment(ctx, repo, a.GHSAID, comment); err != nil {
-			return "", err
+			return o, "", err
 		}
 	}
 
-	return credited, gh.UpdateAdvisory(ctx, repo, a.GHSAID, map[string]any{"state": "closed"})
+	return o, credited, gh.UpdateAdvisory(ctx, repo, a.GHSAID, map[string]any{"state": "closed"})
 }
 
 // Sync mirrors the state of every advisory on its item, counts the duplicates of each report, gives every
