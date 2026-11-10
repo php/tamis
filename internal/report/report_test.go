@@ -208,7 +208,7 @@ func TestRender(t *testing.T) {
 		"| Advisory | Status | Confidence |",
 		"| [GHSA-real](https://x/GHSA-real) | Closed | High • Proposed exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
-		"_The reporter-visible comment only lists exact duplicates, and unpublished ones after a separate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._",
+		"_The board item only lists exact duplicates, and unpublished ones after a separate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._",
 		"| Issue or PR | Title | Confidence |",
 		"| [PR #12](https://x/12) | Harden | Medium |",
 		"| [Issue #13](https://x/13) | Crash | Low |",

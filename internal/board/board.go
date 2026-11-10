@@ -350,16 +350,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 	return b, nil
 }
 
-// Has says whether ghsa has an item with a priority other than AnalysisRetrying. An item without priority comes
-// from a run that failed before writing its fields, one still retrying next to a triage comment from a run whose
-// triage missed the board, and both advisories still need a triage for the board.
-func (b *Board) Has(ghsa string) bool {
-	it := b.items[strings.ToLower(ghsa)]
-
-	return it != nil && it.priority != "" && it.priority != AnalysisRetrying
-}
-
-// TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the comment shows.
+// TriageOf keeps what the board needs of r, with the oldest high-confidence exact duplicate the triage shows.
 func TriageOf(r report.Report) Triage {
 	t := Triage{Severity: r.Severity, Excluded: len(r.PolicyExclusions) > 0, Located: r.Located}
 	t.Component, t.Upstream = r.Component, r.Upstream
@@ -396,8 +387,7 @@ func (b *Board) Put(ctx context.Context, a github.Advisory, priority string, t *
 	return b.put(ctx, a, priority, t, comment, 0)
 }
 
-// PutStatus sets a status without a triage, with the failed attempts so far, which a run that posts no comment
-// cannot count from failure comments.
+// PutStatus sets a status without a triage, with the failed attempts so far, which only the board records.
 func (b *Board) PutStatus(ctx context.Context, a github.Advisory, priority, note string, attempts int) error {
 	return b.put(ctx, a, priority, nil, note, attempts)
 }

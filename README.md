@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/php/tamis/actions/workflows/ci.yml/badge.svg)](https://github.com/php/tamis/actions/workflows/ci.yml)
 
-tamis does a first-pass triage of private vulnerability reports on GitHub. When a new security advisory arrives, an LLM agent investigates it against the repository and tamis puts the findings on a private project board, or posts them as a comment on the advisory with `comment: true`.
+tamis does a first-pass triage of private vulnerability reports on GitHub. When a new security advisory arrives, an LLM agent investigates it against the repository and tamis puts the findings on a private project board.
 
 For each report, tamis:
 
@@ -14,7 +14,7 @@ For each report, tamis:
 
 The maintainers keep the decision. tamis only prepares it.
 
-A comment looks like this, with the cited code, the policy check and the severity folded in a details block. [How it works](docs/how-it-works.md#the-comment) shows the full layout.
+A triage looks like this on the board, with the cited code, the policy check and the severity folded in a details block. [How it works](docs/how-it-works.md#the-triage) shows the full layout.
 
 ```markdown
 ### Automated triage
@@ -68,20 +68,19 @@ flowchart LR
     confirm -->|exact or not| tamis
     reader & dup & confirm -.->|model requests| proxy
     proxy --> provider
-    tamis -->|checked, escaped comment| adv
-    tamis -.->|board item| board
+    tamis -->|"checked, escaped triage"| board
     tamis -->|complete result| art
 ```
 
 ## Before installing
 
-GitHub cannot post confidential advisory comments yet, so with `comment: true` the reporter reads the comment. tamis also sends the report to the model provider you choose. Check that your disclosure policy allows both.
+tamis sends the report to the model provider you choose. Check that your disclosure policy allows it.
 
 ## Quick start
 
 `tamis init` runs these three steps for you, all but installing the App, as [the setup guide](docs/setup.md#setup-in-one-command) shows. By hand:
 
-1. Create a GitHub App for your organisation with the "Repository security advisories" permission in read and write. Install it on the project repository only.
+1. Create a GitHub App for your organisation with the "Repository security advisories" permission and the organisation "Projects" permission, both in read and write. Install it on the project repository only.
 2. In a private repository, store the App's client ID and private key, and an Anthropic or OpenAI API key or a [Codex access token](docs/configuration.md#codex-access-token).
 3. Add this workflow to the private repository:
 
@@ -132,8 +131,8 @@ jobs:
           bot-login: your-app-slug[bot]
           # List every branch your project supports. Each ref must exist in the checkout.
           references: master origin/release-branch
-          # Without a project board, post the triage on the advisory instead.
-          comment: true
+          # The private board the triages go on, created with `tamis create-board your-org`.
+          project: your-org/NUMBER
 ```
 
 Pin the commit of a [release](https://github.com/php/tamis/releases) tag, since the action then runs the attested binary of that release instead of building tamis from source. Set `since` to the installation date so tamis leaves existing advisories alone. Keep the workflow repository private, since the action uploads the reports there as artifacts kept for seven days. The [setup guide](docs/setup.md) covers source branches and provider spending limits.
@@ -144,7 +143,7 @@ Pin the commit of a [release](https://github.com/php/tamis/releases) tag, since 
 |---|---|
 | [Setup](docs/setup.md) | GitHub App, private repository, secrets and first run |
 | [Configuration](docs/configuration.md) | Inputs, budgets, project guidance and engines |
-| [How it works](docs/how-it-works.md) | The triage pipeline and the comment it posts |
+| [How it works](docs/how-it-works.md) | The triage pipeline and what it puts on the board |
 | [Security](docs/security.md) | Threat model, isolation and known limits |
 | [Development](docs/development.md) | Building, testing and running locally |
 

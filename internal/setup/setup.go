@@ -35,7 +35,6 @@ type Config struct {
 	AppName        string
 	// Since is the date the workflow starts from, as YYYY-MM-DD.
 	Since string
-	Board bool
 	// Packs names the guidance packs the workflow enables.
 	Packs []string
 }
@@ -78,10 +77,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, app AppFlow, out io.Writer)
 		return "", fmt.Errorf("reading the latest tamis release: %w", err)
 	}
 
-	permissions := map[string]string{"repository_advisories": "write"}
-	if cfg.Board {
-		permissions["organization_projects"] = "write"
-	}
+	permissions := map[string]string{"repository_advisories": "write", "organization_projects": "write"}
 	code, err := app(ctx, org, map[string]any{
 		"name":                cfg.AppName,
 		"url":                 "https://github.com/php/tamis",
@@ -120,13 +116,11 @@ func Run(ctx context.Context, cfg Config, gh GitHub, app AppFlow, out io.Writer)
 	}
 	fmt.Fprintf(out, "Created the private repository %s and its tamis environment\n", runner)
 
-	project := ""
-	if cfg.Board {
-		if project, err = board.Create(ctx, gh, org, "tamis"); err != nil {
-			return "", err
-		}
-		fmt.Fprintf(out, "Created the project board %s\n", project)
+	project, err := board.Create(ctx, gh, org, "tamis")
+	if err != nil {
+		return "", err
 	}
+	fmt.Fprintf(out, "Created the project board %s\n", project)
 	var w strings.Builder
 	if err := workflow.Execute(&w, map[string]any{
 		"Org": org, "Name": name, "Repository": cfg.Repository, "SHA": sha, "Tag": tag, "Since": cfg.Since,
@@ -193,9 +187,5 @@ jobs:
 [[- if .Packs]]
           packs: [[.Packs]]
 [[- end]]
-[[- if .Project]]
           project: [[.Project]]
-[[- else]]
-          comment: true
-[[- end]]
 `))

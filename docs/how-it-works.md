@@ -4,11 +4,11 @@ Each run goes through four stages. Two models take part, and no model sees both 
 
 ## 1. Selection
 
-tamis lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. It skips an advisory when a comment from `bot-login` holds the tamis marker, and ignores a marker posted by any other account. With a [project board](setup.md#5-project-board), an advisory in `triage` that has a tamis comment but no item is triaged once more for the board, without a new comment. With `comment` left at `false`, the item takes the place of the comments: tamis skips an advisory whose item has a priority other than `Analysis failed, retrying`, and counts the failed attempts in `Attempts`.
+tamis lists the repository's advisories and keeps those in the `triage` state created after `since`, or only the one given in `advisory`. The [project board](setup.md#5-project-board) records what is done: tamis skips an advisory whose item has a priority other than `Analysis pending` or `Analysis failed, retrying`, and counts the failed attempts in `Attempts`.
 
-A failed triage posts a comment that says so, with its own marker, and tamis retries it on the next runs. After three failures, the comment asks a maintainer to review the report and tamis stops retrying. tamis triages an advisory once, so an edit to the report afterwards starts no new triage.
+A failed triage sets the item to `Analysis failed, retrying`, and tamis retries it on the next runs. After three failures, the item gets `Analysis failed`, which asks a maintainer to review the report, and tamis stops retrying. tamis triages an advisory once, so an edit to the report afterwards starts no new triage.
 
-The log names the advisory and each step as it starts: copying the source, reading the report, comparing with other advisories and posting the comment. Each step, and each triaged or failed advisory, also logs its duration, its model requests and its input and output tokens. Cached input tokens count as input.
+The log names the advisory and each step as it starts: copying the source, reading the report, and comparing with other advisories. Each step, and each triaged or failed advisory, also logs its duration, its model requests and its input and output tokens. Cached input tokens count as input.
 
 ## 2. Reading the report
 
@@ -49,22 +49,22 @@ Both stages compare concrete defects, secondary findings of a report included:
 
 Matching stays separate from validity. An issue already fixed, or rejected under the security policy, can still be a duplicate. A finding the report explicitly removes, excludes or moves to another advisory no longer counts as one of its findings.
 
-## 4. Verification and comment
+## 4. Verification and publication
 
-Before posting, tamis checks each claim against GitHub and the checkout:
+Before publishing, tamis checks each claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Each one must belong to the advisories the search received. The private report keeps the complete result. The comment lists exact duplicates only, and an unpublished advisory appears there, by identifier only, once its exact, high-confidence result passes the one-candidate confirmation. |
+| Duplicates | Each one must belong to the advisories the search received. The private report keeps the complete result. The triage lists exact duplicates only, and an unpublished advisory appears there, by identifier only, once its exact, high-confidence result passes the one-candidate confirmation. |
 | Issues and pull requests | Each one must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | tamis keeps only references named in the report, each marked as found in the repository or not, and keeps a cited line and its quoted code only when the report contains them. It looks the quote up in the file at the scanned commit, nearest the cited line. When the quote is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
-| CWE and CVSS | Each must be well-formed. CWE names come from the MITRE catalogue. The comment leaves the CVSS vector out when the faulty code comes from an upstream project. |
+| CWE and CVSS | Each must be well-formed. CWE names come from the MITRE catalogue. The triage leaves the CVSS vector out when the faulty code comes from an upstream project. |
 
-tamis drops the claims that fail a check, and the comment counts them.
+tamis drops the claims that fail a check, and the triage counts them.
 
-Just before publication, tamis reads the report and its non-bot comments again and posts nothing if they changed. It saves the public comment before posting it. A failed duplicate search leaves the duplicates out of the comment, and a failed exact confirmation leaves that unpublished candidate out. The private report records both failures, and the triage still gets published. A failure before publication leaves the advisory retriable.
+Just before publication, tamis reads the report and its non-bot comments again and publishes nothing if they changed. It saves the private report before writing the board item. A failed duplicate search leaves the duplicates out of the triage, and a failed exact confirmation leaves that unpublished candidate out. The private report records both failures, and the triage still gets published. A failure before publication leaves the advisory retriable.
 
-## The comment
+## The triage
 
 ```markdown
 ### Automated triage
@@ -101,6 +101,6 @@ Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the giv
 </details>
 ```
 
-The duplicates and related issues stay visible. The cited code, the security policy and the weakness estimate sit in a folded block so the comment reads fast.
+The duplicates and related issues stay visible. The cited code, the security policy and the weakness estimate sit in a folded block so the triage reads fast.
 
-tamis escapes all model text, so the comment cannot carry links, images, HTML or mentions coming from the model. It builds the links to cited lines from the repository name, the commit hash and the tracked path, and never shows the quoted code.
+tamis escapes all model text, so the triage cannot carry links, images, HTML or mentions coming from the model. It builds the links to cited lines from the repository name, the commit hash and the tracked path, and never shows the quoted code.

@@ -5,7 +5,7 @@ description: Install tamis, the first-pass triage of GitHub security advisories,
 
 # tamis setup
 
-You help a maintainer install tamis on their project. `tamis init` does almost everything: it registers the GitHub App, creates a private runner repository with its `tamis` environment and secrets, writes the workflow pinned to the latest release and, with `-board`, creates the project board. Your job is to gather its inputs, check the prerequisites, hand over the command and guide the two clicks it cannot do. [docs/setup.md](https://github.com/php/tamis/blob/main/docs/setup.md) is the reference when something below is not enough.
+You help a maintainer install tamis on their project. `tamis init` does almost everything: it registers the GitHub App, creates a private runner repository with its `tamis` environment and secrets, writes the workflow pinned to the latest release and creates the project board. Your job is to gather its inputs, check the prerequisites, hand over the command and guide the two clicks it cannot do. [docs/setup.md](https://github.com/php/tamis/blob/main/docs/setup.md) is the reference when something below is not enough.
 
 Never ask for the model provider key, never put it in a command you run or show it in the conversation. The user types it in their own terminal.
 
@@ -16,7 +16,7 @@ Ask only for what you cannot find yourself:
 1. The project, as `org/name`. Check it with `gh repo view org/name --json visibility,defaultBranchRef`. It must be public, since GitHub only serves security advisories for public repositories, and it must belong to an organisation, since the App is created there. `tamis init` refuses a private project anyway.
 2. The supported branches. Read the security policy (`SECURITY.md`, `.github/SECURITY.md`) or the release branches with `gh api repos/org/name/branches --paginate --jq '.[].name'`, then confirm them with the user. The workflow checks the project out with its full history, so every branch other than the default one is written `origin/<branch>`, the analysed one first: `-references "master origin/PHP-8.4 origin/PHP-8.3"`, or `-references main` for a project that only supports its default branch.
 3. The engine: `claude` with an Anthropic API key, the default, or `openai` with an OpenAI API key or a Codex access token.
-4. Comments or board. With comments, the reporter reads the triage on the advisory, since GitHub cannot post confidential comments yet. With `-board`, the triage only lands on a private organisation project the security team reads. Make sure the user knows the reporter reads the comment before they pick comments. `-board` always creates a new project. To reuse an existing tamis board, run `init` without `-board`, then replace `comment: true` with `project: org/NUMBER` in the workflow it writes and give the App the organisation "Projects" permission in read and write, which only `-board` asks for. An older board can miss a field the current release needs, such as `Upstream`: compare `gh project field-list NUMBER --owner org` with the fields of docs/setup.md and add the missing ones with `gh project field-create`.
+4. The board. The triage lands on a private organisation project the security team reads, and `tamis init` always creates a new one. To reuse an existing tamis board, replace the `project` value in the workflow it writes with `org/NUMBER`, then delete the new project. An older board can miss a field the current release needs, such as `Upstream`: compare `gh project field-list NUMBER --owner org` with the fields of docs/setup.md and add the missing ones with `gh project field-create`.
 
 When a [guidance pack](https://github.com/php/tamis/blob/main/docs/configuration.md#guidance-packs) exists for the project, such as `php-src`, pass it with `-packs php-src`.
 
@@ -45,7 +45,7 @@ The assets are `tamis-{darwin,linux}-{amd64,arm64}` and `tamis-windows-{amd64,ar
 Write the command with the inputs filled in and ask the user to run it in their own terminal, not through you, so the key stays out of the conversation and the browser step runs on their machine:
 
 ```bash
-read -rs LLM_API_KEY && export LLM_API_KEY && GH_TOKEN=$(gh auth token) ./tamis init -repository org/name -references "main origin/release-1" -board
+read -rs LLM_API_KEY && export LLM_API_KEY && GH_TOKEN=$(gh auth token) ./tamis init -repository org/name -references "main origin/release-1"
 ```
 
 `read -rs` waits for the key without echoing it. Add `-engine openai` for an OpenAI key or a Codex access token.
@@ -67,6 +67,6 @@ gh workflow run tamis.yml -R org/tamis-runner -f advisory=GHSA-xxxx-xxxx-xxxx
 gh run watch -R org/tamis-runner
 ```
 
-Without a test advisory, a run without `advisory` only triages the advisories created since the setup day, usually none, which still checks the App, the secrets and the checkout. Then check the result where it lands: the comment on the advisory, or the item on the board. The private `tamis-reports` artifact of the run holds the full report, and access to it follows the permissions of the runner repository, so grant that repository to the security team only.
+Without a test advisory, a run without `advisory` only triages the advisories created since the setup day, usually none, which still checks the App, the secrets and the checkout. Then check the item on the board. The private `tamis-reports` artifact of the run holds the full report, and access to it follows the permissions of the runner repository, so grant that repository to the security team only.
 
 After that the schedule polls every 15 minutes. `.github/tamis.md` in the project tells the agent what it cannot guess, such as the scope or how the project scores CVSS, and is worth writing once the first triages are in.

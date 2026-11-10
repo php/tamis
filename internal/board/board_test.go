@@ -171,22 +171,6 @@ func values(p *boardtest.Project, id int64) map[string]string {
 	return v
 }
 
-func TestHas(t *testing.T) {
-	p := boardtest.New()
-	p.Add(map[string]any{"GHSA": "GHSA-old", "Priority": "To triage"})
-	p.Add(map[string]any{"GHSA": "GHSA-bare"})
-	p.Add(map[string]any{"GHSA": "GHSA-a", "Priority": "Analysis failed, retrying"})
-	p.Add(map[string]any{"GHSA": "GHSA-b", "Priority": "Analysis failed"})
-	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
-	require.NoError(t, err)
-
-	require.True(t, b.Has("ghsa-OLD"))
-	require.False(t, b.Has("GHSA-new"))
-	require.False(t, b.Has("GHSA-bare"), "an item without priority looks triaged")
-	require.False(t, b.Has("GHSA-a"), "an item still retrying looks triaged")
-	require.True(t, b.Has("GHSA-b"), "an item out of attempts looks retriable")
-}
-
 func TestOpenReportsAFailedRead(t *testing.T) {
 	p := boardtest.New()
 	p.ListErr = errors.New("HTTP 403")
@@ -570,7 +554,8 @@ func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
 
 	b, err = Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.False(t, b.Has(ghsa), "an item without fields looks triaged")
+	priority, _ := b.Status(ghsa)
+	require.Empty(t, priority, "an item without fields looks triaged")
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 
 	require.Len(t, p.Items, 1, "the issue was added to the project twice")

@@ -63,7 +63,7 @@ type GitHub interface {
 
 type Config struct {
 	Repo string
-	// Since excludes advisories created before it, so a first run does not comment the backlog.
+	// Since excludes advisories created before it, every advisory in triage goes on the board when zero.
 	Since time.Time
 	// Advisory targets a single advisory and bypasses Since.
 	Advisory string
@@ -73,11 +73,11 @@ type Config struct {
 	BotLogin   string
 	OutputDir  string
 	References []string
-	// Project is the private project board kept in sync with the advisories, as "org/number", none when empty.
+	// Project is the private project board the triages go on, as "org/number". It records what is done and the
+	// failed attempts.
 	Project string
-	// NoComment leaves the advisories without comment and puts every triage on the board only, which then records
-	// what is done and the failed attempts.
-	NoComment bool
+	// Link posts on each advisory the link to the issue this run creates for it.
+	Link bool
 	// IssuesRepository makes the new board items issues of that private repository, drafts when empty. Issues
 	// writes them with a token that only reaches that repository.
 	IssuesRepository string
@@ -135,11 +135,8 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if cfg.OutputDir == "" || len(cfg.References) == 0 {
 		return errors.New("a private output directory and source references are required")
 	}
-	if cfg.NoComment && cfg.Project == "" {
-		return errors.New("a run without comments needs a project board to record its triages")
-	}
-	if cfg.Force && !cfg.NoComment {
-		return errors.New("a forced run triages again for the board only, so it needs comments off")
+	if cfg.Project == "" {
+		return errors.New("a project board is required to record the triages")
 	}
 	guidance, err := skill.Packs(cfg.Packs)
 	if err != nil {
@@ -159,17 +156,14 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	if err != nil {
 		return errors.New("listing advisories: " + describe(err))
 	}
-	// A board edited by hand into an unexpected layout only leaves the board out, the triage still runs.
-	var b *board.Board
-	var boardErr error
-	if cfg.Project != "" {
-		if b, err = board.Open(ctx, gh, cfg.Issues, cfg.Project, cfg.IssuesRepository, cfg.Repo); err != nil {
-			boardErr = fmt.Errorf("opening the project board: %w", err)
-			log.Error("the project board is left out of this run", "reason", boardErr.Error())
-		}
+	// A board edited by hand into an unexpected layout stops the run, and every advisory waits for it.
+	b, err := board.Open(ctx, gh, cfg.Issues, cfg.Project, cfg.IssuesRepository, cfg.Repo)
+	if err != nil {
+		return fmt.Errorf("opening the project board: %w", err)
 	}
+	var boardErr error
 	// The issues were read when the board opened, so the duplicates close before the triage takes hours.
-	if b != nil && cfg.CloseDuplicates {
+	if cfg.CloseDuplicates {
 		if err := b.CloseDuplicates(ctx, gh, cfg.Repo, all); err != nil {
 			log.Error("closing the duplicates failed", "reason", describe(err))
 			boardErr = errors.Join(boardErr, errors.New("closing the duplicates: "+describe(err)))
@@ -194,6 +188,32 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			continue
 		}
 		log := log.With("advisory", a.GHSAID)
+		priority, failures := b.Status(a.GHSAID)
+		// A pending item outlived a run that stopped during its analysis, which counts as a failed attempt.
+		done := priority != "" && priority != board.AnalysisRetrying && priority != board.AnalysisPending
+		// The triage an item already holds stays on the board until a new one replaces it.
+		keep := cfg.Force && done
+		if cfg.Force {
+			done, failures = false, 0
+		}
+		if done || failures >= maxAttempts {
+			log.Info("skipped, already triaged or out of attempts")
+			skipped++
+			continue
+		}
+		if time.Until(deadline) < maxAdvisoryDuration {
+			log.Info("the run time is spent, the remaining advisories wait for the next run")
+			break
+		}
+		if a.Author.Login != "" && reporters[strings.ToLower(a.Author.Login)] {
+			log.Info("waits for the next run, its reporter already has a report in this one")
+			continue
+		}
+		// An advisory started without its whole budget would fail, the next run picks it up instead.
+		if !budget.Has(ctx, maxComparatorRequests, engine.RequestLimitBytes) {
+			log.Info("the run budget is spent, the remaining advisories wait for the next run")
+			break
+		}
 		advisoryCtx, cancel := context.WithTimeout(ctx, maxAdvisoryDuration)
 
 		comments, err := gh.ListComments(advisoryCtx, cfg.Repo, a.GHSAID)
@@ -204,52 +224,8 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			continue
 		}
 		revision := advisoryRevision(a, comments, login, cfg.References)
-		done, failures := attempts(comments, login)
-		// An advisory triaged before the board existed is triaged again for it, without a new comment. GitHub
-		// refuses to edit an advisory comment, even its author's, so the item itself records that it was done.
-		backfill := done && b != nil && a.State == "triage" && !b.Has(a.GHSAID)
-		if cfg.NoComment {
-			if b == nil {
-				cancel()
-				log.Info("skipped, the board this run records its triages on is left out")
-				skipped++
-				continue
-			}
-			priority, n := b.Status(a.GHSAID)
-			// A pending item outlived a run that stopped during its analysis, which counts as a failed attempt.
-			done, failures = priority != "" && priority != board.AnalysisRetrying && priority != board.AnalysisPending, n
-			backfill = !done
-		}
-		// The triage an item already holds stays on the board until a new one replaces it.
-		keep := cfg.Force && done
-		if cfg.Force {
-			done, backfill, failures = false, true, 0
-		}
-		if done && !backfill || failures >= maxAttempts {
-			cancel()
-			log.Info("skipped, already triaged or out of attempts")
-			skipped++
-			continue
-		}
-		if time.Until(deadline) < maxAdvisoryDuration {
-			cancel()
-			log.Info("the run time is spent, the remaining advisories wait for the next run")
-			break
-		}
-		if a.Author.Login != "" && reporters[strings.ToLower(a.Author.Login)] {
-			cancel()
-			log.Info("waits for the next run, its reporter already has a report in this one")
-			continue
-		}
-		// An advisory started without its whole budget would fail, the next run picks it up instead.
-		if !budget.Has(ctx, maxComparatorRequests, engine.RequestLimitBytes) {
-			cancel()
-			log.Info("the run budget is spent, the remaining advisories wait for the next run")
-			break
-		}
-		// The item goes on the board first, so a board refusing writes costs no model run. A failed triage for the
-		// board is not retried, so a report that never completes costs one run only.
-		if backfill && !keep {
+		// The item goes on the board first, so a board refusing writes costs no model run.
+		if !keep {
 			note := fmt.Sprintf("The automated analysis started on %s UTC and has not finished. If this stays after the next run, that run stopped during the analysis.", time.Now().UTC().Format("2006-01-02 at 15:04"))
 			if err := b.PutStatus(advisoryCtx, a, board.AnalysisPending, note, failures+1); err != nil {
 				cancel()
@@ -261,19 +237,15 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		reporters[strings.ToLower(a.Author.Login)] = true
 		log.Info("triaging", "attempt", failures+1)
 		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
-		// A run without comments retries from the board, a backfill next to a comment gets one attempt.
-		final := failures+1 >= maxAttempts || backfill && !cfg.NoComment
+		final := failures+1 >= maxAttempts
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, backfill, login, revision, final, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, login, revision, final, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
 				log.Error("the agent error could not be kept in the private reports")
 			}
-			if !published && !backfill {
-				_ = gh.PostComment(ctx, cfg.Repo, a.GHSAID, report.Failed(!final))
-			}
-			if b != nil && !published && !keep {
+			if !published && !keep {
 				priority, note := board.AnalysisFailed, fmt.Sprintf("The automated analysis failed (%s) and will not be retried. A maintainer must triage this report.", describe(err))
 				if !final {
 					priority, note = board.AnalysisRetrying, fmt.Sprintf("The automated analysis failed (%s) on attempt %d of %d. The next run retries it.", describe(err), failures+1, maxAttempts)
@@ -290,17 +262,15 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		triaged++
 	}
 
-	if b != nil && !cfg.NoComment {
+	if cfg.Link {
 		if err := b.LinkIssues(ctx, gh, cfg.Repo); err != nil {
 			log.Error("linking the issues on their advisories failed", "reason", describe(err))
 			boardErr = errors.Join(boardErr, errors.New("linking the issues: "+describe(err)))
 		}
 	}
-	if b != nil {
-		if err := b.Sync(ctx, all); err != nil {
-			log.Error("syncing the project board failed", "reason", describe(err))
-			boardErr = errors.Join(boardErr, errors.New("syncing the project board: "+describe(err)))
-		}
+	if err := b.Sync(ctx, all); err != nil {
+		log.Error("syncing the project board failed", "reason", describe(err))
+		boardErr = errors.Join(boardErr, errors.New("syncing the project board: "+describe(err)))
 	}
 	log.Info("done", "triaged", triaged, "already_triaged", skipped, "failed", failed)
 	if failed > 0 {
@@ -360,24 +330,6 @@ func selected(cfg Config, a github.Advisory) bool {
 	}
 
 	return a.State == "triage" && a.CreatedAt.After(cfg.Since)
-}
-
-// attempts only trusts the markers in comments of the token owner, a reporter could post them to skip the triage.
-// GitHub logins are case-insensitive, and BotLogin is typed by hand.
-func attempts(comments []github.Comment, login string) (done bool, failures int) {
-	for _, c := range comments {
-		if !strings.EqualFold(c.User.Login, login) {
-			continue
-		}
-		switch {
-		case strings.Contains(c.Body, report.Marker):
-			return true, failures
-		case strings.Contains(c.Body, report.FailedMarker):
-			failures++
-		}
-	}
-
-	return false, failures
 }
 
 // triage runs the reader on the report, in a sandboxed agent that only reaches public data.
