@@ -55,7 +55,7 @@ inputs:
     description: Post the triage as a comment on the advisory. Off by default, every triage then only reaches `project`, which must be set.
     default: "false"
   references:
-    description: Whitespace-separated local git references, including each supported release branch. The first is analysed, the cited code is located on all of them. All must have been fetched.
+    description: Whitespace-separated local git references, including each supported release branch. The first is analysed, and the cited code is located on it. All must have been fetched.
     required: true
   packs:
     description: Whitespace-separated built-in guidance packs added to the agent's method, such as `php-src`. None by default.

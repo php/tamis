@@ -419,7 +419,7 @@ func TestRunLimitsEachReporterPerExecution(t *testing.T) {
 	require.Len(t, eng.role(""), 1, "one reporter monopolized the run")
 }
 
-func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
+func TestRunLocatesTheCitedCodeOnTheAnalysedBranch(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{reader: `{"summary":"s","code_references":[{"path":"head.c"}]}`}
 	gh.advisories[1].Description = "Crash in head.c"
 	dir := gitRepo(t, map[string]string{"stable.c": "stable"})
@@ -439,9 +439,10 @@ func TestRunLocatesTheCitedCodeOnEveryConfiguredBranch(t *testing.T) {
 	require.Greater(t, provenance, strings.Index(posted, "<details>"), "the provenance is outside the details block")
 	require.Less(t, provenance, strings.Index(posted, "</details>"), "the provenance is outside the details block")
 	require.Equal(t, 1, strings.Count(posted, "#### Code cited by the report"), "the cited code was rendered once per branch")
-	require.Regexp(t, "\\| Cited \\| In the repository on `HEAD` at `[0-9a-f]{7}` \\| In the repository on `stable` at `[0-9a-f]{7}` \\|", posted)
-	row := strings.Index(posted, "| `head.c` | Found | Not found |")
-	require.Positive(t, row, "the cited code was not located on each branch")
+	require.Regexp(t, "\\| Cited \\| In the repository on `HEAD` at `[0-9a-f]{7}` \\|\n", posted)
+	require.NotContains(t, posted, "In the repository on `stable`", "the cited code was located on another branch")
+	row := strings.Index(posted, "| `head.c` | Found |\n")
+	require.Positive(t, row, "the cited code was not located on the analysed branch")
 	require.Less(t, strings.Index(posted, "<details>"), row, "the cited code is outside the details block")
 	require.Less(t, row, strings.Index(posted, "</details>"), "the cited code is outside the details block")
 	out, err = exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").CombinedOutput()
@@ -768,7 +769,7 @@ func TestRunLeavesTheAdvisoriesToTheNextRunOnceItsTimeIsSpent(t *testing.T) {
 	require.Contains(t, logs.String(), "the run time is spent, the remaining advisories wait for the next run")
 }
 
-func TestRunHidesPartialMatchesOnUnpublishedAdvisories(t *testing.T) {
+func TestRunHidesPartialMatches(t *testing.T) {
 	gh := newFixture()
 	gh.advisories = append(gh.advisories, github.Advisory{GHSAID: "GHSA-pub", State: "published", HTMLURL: "https://x/GHSA-pub", Summary: "foo php_foo"})
 	eng := &fakeEngine{comparator: `{"duplicates":[{"ghsa_id":"GHSA-old","confidence":"low","exact":false},{"ghsa_id":"GHSA-pub","confidence":"low","exact":false}]}`}
@@ -779,7 +780,7 @@ func TestRunHidesPartialMatchesOnUnpublishedAdvisories(t *testing.T) {
 	assert.NotContains(t, body, "GHSA-old", "partial matches on unpublished advisories must not show, even as a count")
 	assert.NotContains(t, body, "GHSA-draft", "partial matches on unpublished advisories must not show, even as a count")
 	assert.NotContains(t, body, "removed", "partial matches on unpublished advisories must not show, even as a count")
-	assert.Contains(t, body, "| [GHSA-pub](https://x/GHSA-pub) | Published | Low |", "published duplicates are listed whatever their confidence")
+	assert.NotContains(t, body, "GHSA-pub", "a partial match on a published advisory reached the comment")
 	assert.Contains(t, privateReports(t, gh), "GHSA-old", "the global private match was discarded")
 	assert.Empty(t, eng.confirmations(), "a non-exact match spent an exact confirmation")
 }

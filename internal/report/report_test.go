@@ -170,7 +170,7 @@ func TestRenderFoldsTheAnalysisDetails(t *testing.T) {
 	})
 
 	order := []string{
-		"#### Possible duplicates",
+		"#### Duplicates",
 		"#### Related issues and pull requests",
 		"\n<details>\n<summary>Show more details from the analysis</summary>\n\n#### Code cited by the report",
 		"#### Security policy",
@@ -208,7 +208,7 @@ func TestRender(t *testing.T) {
 		"| Advisory | Status | Confidence |",
 		"| [GHSA-real](https://x/GHSA-real) | Closed | High • Proposed exact duplicate |",
 		"| [GHSA-near](https://x/GHSA-near) | Published | Low |",
-		"_The reporter-visible comment only lists unpublished advisories after a separate exact-duplicate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._",
+		"_The reporter-visible comment only lists exact duplicates, and unpublished ones after a separate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._",
 		"| Issue or PR | Title | Confidence |",
 		"| [PR #12](https://x/12) | Harden | Medium |",
 		"| [Issue #13](https://x/13) | Crash | Low |",
@@ -230,11 +230,13 @@ func TestRenderShowsOnlyExactUnpublishedMatches(t *testing.T) {
 		{GHSAID: "EXACT-ID", Confidence: "high", Exact: true, Confirmed: true},
 		{GHSAID: "UNSURE-ID", Confidence: "medium", Exact: true},
 		{GHSAID: "PARTIAL-ID", Confidence: "high"},
-		{GHSAID: "PUBLIC-ID", Confidence: "low", Published: true},
+		{GHSAID: "PUBLIC-ID", Confidence: "low", Exact: true, Published: true},
+		{GHSAID: "PUBLISHED-NEAR-ID", Confidence: "high", Published: true},
 	}}
 	body := Render(r)
 	require.Contains(t, body, "EXACT-ID", "an exact duplicate is missing from the comment")
-	require.Contains(t, body, "PUBLIC-ID", "a published duplicate is missing from the comment")
+	require.Contains(t, body, "PUBLIC-ID", "a published exact duplicate is missing from the comment")
+	require.NotContains(t, body, "PUBLISHED-NEAR-ID", "a partial published match reached the comment")
 	require.NotContains(t, body, "UNSURE-ID", "an unpublished match below high confidence reached the comment")
 	require.NotContains(t, body, "PARTIAL-ID", "a partial unpublished match reached the comment")
 	require.Contains(t, RenderPrivate(r), "PARTIAL-ID", "public rendering modified the private result")
@@ -254,7 +256,7 @@ func TestRenderMarksTheOldestReport(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(got, "(oldest report)"), got)
 
 	for _, r := range []Report{{CreatedAt: day(1), Duplicates: duplicates}, {Duplicates: []Duplicate{{GHSAID: "GHSA-undated", Confidence: "high", Exact: true, Published: true}}}, {Duplicates: duplicates[2:3]}} {
-		assert.NotContains(t, Render(r), "(oldest report)", "%+v", r)
+		assert.NotContains(t, RenderPrivate(r), "(oldest report)", "%+v", r)
 	}
 }
 
@@ -349,6 +351,21 @@ func TestRenderPolicyPointEndingWithAPeriod(t *testing.T) {
 	assert.NotContains(t, got, ".:")
 }
 
+func TestRenderLeavesOutTheCVSSVectorOfUpstreamCode(t *testing.T) {
+	r := Report{CWE: []CWE{{ID: "CWE-787", Reason: "write"}}, CVSS: CVSS{Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", Reason: "remote"}}
+	assert.Contains(t, Render(r), "| CVSS 4.0 |")
+
+	r.Upstream = "lexbor"
+	got := Render(r)
+	assert.NotContains(t, got, "CVSS")
+	assert.Contains(t, got, "| CWE | [CWE-787]")
+	assert.Equal(t, "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", r.CVSS.Vector, "rendering cleared the vector of the report")
+	assert.Contains(t, RenderPrivate(r), "| CVSS 4.0 |", "the private report lost the vector")
+
+	r.CWE = nil
+	assert.Contains(t, Render(r), "#### Weakness and severity\n\nNo estimate.\n")
+}
+
 func TestRenderNamesTheUpstreamProject(t *testing.T) {
 	assert.Contains(t, Render(Report{Summary: "Overflow in the tokenizer.", Upstream: "lexbor"}), "Overflow in the tokenizer.\n\nThe faulty code seems to come from `lexbor`, which the repository bundles, so the fix may belong upstream.\n")
 	assert.NotContains(t, Render(Report{Summary: "Overflow in the tokenizer."}), "upstream")
@@ -376,7 +393,7 @@ func TestVerifyKeepsOnlyAProjectNameAsUpstream(t *testing.T) {
 func TestRenderFailedDuplicateSearch(t *testing.T) {
 	got := Render(Report{Summary: "s", DuplicateSearchFailed: true})
 
-	assert.Contains(t, got, "#### Possible duplicates\n\nThe duplicate search could not complete.\n")
+	assert.Contains(t, got, "#### Duplicates\n\nThe duplicate search could not complete.\n")
 	assert.NotContains(t, got, "None found among the repository advisories.")
 }
 

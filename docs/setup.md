@@ -54,7 +54,7 @@ Copy the workflow from the [README](../README.md#quick-start), then:
 - replace `your-org`, `your-project`, `your-app-slug` and the commit placeholder,
 - pin the full SHA of a reviewed commit, since the action refuses a branch or tag, and review later updates in the private repository,
 - set `since` to today's date, so tamis only processes advisories in the `triage` state created after it,
-- set `references` to every branch your security policy covers, default branch first. tamis analyses the report on the first one and locates the cited code on each.
+- set `references` to every branch your security policy covers, default branch first. tamis analyses the report and locates the cited code on the first one.
 
 Keep `persist-credentials: false` on the checkout so no token lands in `.git/config`, and `fetch-depth: 0` so the agent can read the history.
 

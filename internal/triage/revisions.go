@@ -91,12 +91,6 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		}
 		sources += fmt.Sprintf("Source: `%s` at `%s`.\n", reference, commit)
 		if i > 0 {
-			cited := report.Report{CodeReferences: slices.Clone(r.CodeReferences)}
-			if err := (report.Checker{Repo: cfg.Repo, Code: code}).Locate(&cited); err != nil {
-				return false, err
-			}
-			cited.Branch = reference
-			r.Elsewhere = append(r.Elsewhere, cited)
 			continue
 		}
 		local := cfg

@@ -6,7 +6,7 @@ tamis does a first-pass triage of private vulnerability reports on GitHub. When 
 
 For each report, tamis:
 
-- lists public duplicates, and names an embargoed advisory only when it is an exact duplicate,
+- lists exact duplicates, and names an embargoed one only once a separate check confirms it,
 - finds public issues and pull requests that already fix or harden the same code,
 - checks that the files and functions the report cites exist,
 - reads the security policy and flags what may exclude the report,
@@ -25,7 +25,7 @@ Scanned on 2026-10-24 at 14:32 UTC on `main` at `21a7561`.
 
 Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the given reproducer never reaches it.
 
-#### Possible duplicates
+#### Duplicates
 
 | Advisory | Status | Confidence |
 |---|---|---|

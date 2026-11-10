@@ -26,7 +26,7 @@ tamis rejects an unknown or mistyped field in the JSON and sends the error back 
 
 When the run stops on its budget or on an error, tamis keeps a valid report already written in the private artifact and retries the advisory. The last attempt posts that report with a note that it may be incomplete.
 
-The agent analyses the first configured reference. tamis then locates the cited code on each other reference, and the final report names every exact commit. A missing branch fails the triage.
+The agent analyses the first configured reference, where tamis locates the cited code, and the final report names the exact commit of every reference. A missing branch fails the triage.
 
 ## 3. Duplicate search
 
@@ -55,10 +55,10 @@ Before posting, tamis checks each claim against GitHub and the checkout:
 
 | Claim | Check |
 |---|---|
-| Duplicates | Each one must belong to the advisories the search received. The private report keeps the complete result. An unpublished advisory appears in the comment, by identifier only, once its exact, high-confidence result passes the one-candidate confirmation. |
+| Duplicates | Each one must belong to the advisories the search received. The private report keeps the complete result. The comment lists exact duplicates only, and an unpublished advisory appears there, by identifier only, once its exact, high-confidence result passes the one-candidate confirmation. |
 | Issues and pull requests | Each one must exist. Titles and links come from GitHub, not from the model. |
 | Cited code | tamis keeps only references named in the report, each marked as found in the repository or not, and keeps a cited line and its quoted code only when the report contains them. It looks the quote up in the file at the scanned commit, nearest the cited line. When the quote is gone, `git log -S` names the commit that last changed it, since reports often target another version. |
-| CWE and CVSS | Each must be well-formed. CWE names come from the MITRE catalogue. |
+| CWE and CVSS | Each must be well-formed. CWE names come from the MITRE catalogue. The comment leaves the CVSS vector out when the faulty code comes from an upstream project. |
 
 tamis drops the claims that fail a check, and the comment counts them.
 
@@ -75,7 +75,7 @@ Scanned on 2026-10-24 at 14:32 UTC on `main` at `21a7561`.
 
 Plausible signed `char` passed to `isxdigit()` in `php_url_decode_ex()`, the given reproducer never reaches it.
 
-#### Possible duplicates
+#### Duplicates
 
 | Advisory | Status | Confidence |
 |---|---|---|
