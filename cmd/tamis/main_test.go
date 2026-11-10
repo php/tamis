@@ -28,30 +28,28 @@ func TestParseSince(t *testing.T) {
 	assert.Error(t, err, "an invalid date should fail")
 }
 
-func TestNewEngine(t *testing.T) {
-	for name, want := range map[string]string{"": "claude", "claude": "claude", "openai": "codex"} {
-		_, agent, model, err := newEngine(name, "", "key")
+func TestSelectAgent(t *testing.T) {
+	for name, want := range map[string][2]string{"": {"claude", defaultClaudeModel}, "claude": {"claude", defaultClaudeModel}, "openai": {"codex", defaultOpenAIModel}} {
+		agent, model, err := selectAgent(name, "", "key")
 		assert.NoError(t, err, "%q", name)
-		assert.Equal(t, want, agent, "%q", name)
-		assert.NotEmpty(t, model, "%q", name)
+		assert.Equal(t, want[0], agent, "%q", name)
+		assert.Equal(t, want[1], model, "%q", name)
 	}
 
-	eng, agent, model, err := newEngine("openai", "", "at-token")
+	agent, model, err := selectAgent("openai", "", "at-token")
 	assert.NoError(t, err, "a Codex access token")
-	assert.Nil(t, eng, "a Codex access token")
 	assert.Equal(t, "codex-token", agent, "a Codex access token")
 	assert.Equal(t, defaultCodexTokenModel, model, "a Codex access token")
 
-	eng, agent, _, _ = newEngine("claude", "", "at-key")
-	assert.NotNil(t, eng, "only the openai engine reads a Codex access token")
+	agent, _, _ = selectAgent("claude", "", "at-key")
 	assert.Equal(t, "claude", agent, "only the openai engine reads a Codex access token")
 
-	_, _, model, _ = newEngine("claude", "claude-sonnet-5-5", "key")
+	_, model, _ = selectAgent("claude", "claude-sonnet-5-5", "key")
 	assert.Equal(t, "claude-sonnet-5-5", model, "an explicit model should be kept")
 
-	_, _, _, err = newEngine("gemini", "", "key")
+	_, _, err = selectAgent("gemini", "", "key")
 	assert.Error(t, err, "an unknown engine should fail")
-	_, _, _, err = newEngine("claude", "", "")
+	_, _, err = selectAgent("claude", "", "")
 	assert.Error(t, err, "a missing API key should fail")
 }
 

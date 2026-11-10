@@ -20,9 +20,6 @@ import (
 	"github.com/php/tamis/internal/repo"
 )
 
-// Marker opens every triage tamis renders.
-const Marker = "<!-- tamis -->"
-
 var (
 	cweID = regexp.MustCompile(`^CWE-[1-9][0-9]*$`)
 	// Base metrics only, in the order mandated by the CVSS 4.0 specification.
@@ -113,10 +110,10 @@ type Duplicate struct {
 	Confirmed bool `json:"-"`
 }
 
-// visible says whether the reporter may see d.
+// visible says whether the board item lists d.
 func (d Duplicate) visible() bool {
-	// A reporter learns nothing from an exact duplicate of their own bug, a partial match on an
-	// unpublished advisory would reveal another report, and the maintainers only act on exact ones.
+	// A partial match on an unpublished advisory would reveal another report, and the maintainers only act on
+	// exact ones.
 	return d.Exact && (d.Published || d.Confirmed && d.Confidence == "high")
 }
 
@@ -506,10 +503,10 @@ func Render(r Report) string {
 	return RenderPrivate(r)
 }
 
-// RenderPrivate renders every duplicate it is given, Render only those the reporter may see.
+// RenderPrivate renders every duplicate it is given, Render only those the board item lists.
 func RenderPrivate(r Report) string {
 	var b strings.Builder
-	b.WriteString(Marker + "\n### Automated triage\n\n")
+	b.WriteString("### Automated triage\n\n")
 	b.WriteString("> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.\n\n")
 	if !r.ScannedAt.IsZero() {
 		fmt.Fprintf(&b, "Scanned on %s UTC%s.\n\n", r.ScannedAt.UTC().Format("2006-01-02 at 15:04"), r.scope())

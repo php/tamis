@@ -34,7 +34,7 @@ tamis itself never logs report text, the identifiers of other advisories or prov
 The agent runs through [harness](https://github.com/alpha-omega-security/harness), the isolation layer of [scrutineer](https://github.com/alpha-omega-security/scrutineer):
 
 - a throwaway container per advisory, with a read-only root filesystem, all capabilities dropped and no new privileges,
-- one single-branch clone of the analysed branch per execution, mounted read-only into each agent run, with no untracked files and an empty `.git/config`, while only tamis reads the other branches, checked out as worktrees,
+- one single-branch clone of the analysed branch per execution, mounted read-only into each agent run, with no untracked files and an empty `.git/config`, while tamis only reads the commit of the other branches,
 - an internal bridge network with both gateway modes set to `isolated` and IPv6 disabled, whose only peer is an authenticated egress proxy that allows the model proxy and `api.github.com`,
 - a read-only workspace except for `report.json`, with memory, CPU, process and file-size limits,
 - an image with only the agent CLI, git, curl, ripgrep and `harness-proxy`, each download checked against a pinned checksum,

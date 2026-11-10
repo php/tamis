@@ -56,7 +56,7 @@ Each report names the source commit and the input revision it covers.
 | Request | 1 MiB of body. API responses ask for at most 16,000 output tokens, and the ChatGPT backend applies its own output limits. |
 | Reports | One per known reporter and per execution |
 
-tamis starts a report only while the execution still holds a whole advisory budget and thirty minutes of its time. Otherwise the report waits for the next execution. SDK retries are off, but tamis retries an agent run that fails without a valid report once, after a minute, unless the model account was refused for good or the advisory budget is spent. A GitHub read answered with 429, 502, 503 or 504 is tried up to three times. When a budget runs out, the report stays retriable and tamis does not mark it complete.
+tamis starts a report only while the execution still holds a whole advisory budget and thirty minutes of its time. Otherwise the report waits for the next execution. tamis retries an agent run that fails without a valid report once, after a minute, unless the model account was refused for good or the advisory budget is spent. A GitHub read answered with 429, 502, 503 or 504 is tried up to three times. When a budget runs out, the report stays retriable and tamis does not mark it complete.
 
 These bounds cap one execution, not the spending across scheduled runs. Provider pricing, tokenisation and ChatGPT credit policies differ, so request and byte limits give no monetary guarantee. On the provider side:
 
@@ -89,11 +89,13 @@ The triage lists the files the agent checked. Without any of them, tamis leaves 
 
 ## Engines
 
-| Engine | Reader and global search | Exact confirmation | Model API |
-|---|---|---|---|
-| `claude` | Claude Code | Anthropic API | `api.anthropic.com` |
-| `openai` | Codex | OpenAI Chat Completions | `api.openai.com` |
-| `openai` with a Codex access token | Codex | Codex, in a container without GitHub access | `chatgpt.com` |
+| Engine | Agent | Model API |
+|---|---|---|
+| `claude` | Claude Code | `api.anthropic.com` |
+| `openai` | Codex | `api.openai.com` |
+| `openai` with a Codex access token | Codex | `chatgpt.com` |
+
+The reader, the duplicate search and each exact confirmation run that agent in a container of their own, the last two without GitHub access.
 
 [`docker/agent/Dockerfile`](../docker/agent/Dockerfile) pins the agent CLI versions.
 

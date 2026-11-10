@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/php/tamis/internal/board"
-	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/sandbox"
 	"github.com/php/tamis/internal/setup"
@@ -25,8 +24,12 @@ import (
 	"github.com/php/tamis/skill"
 )
 
-// defaultCodexTokenModel is Codex's default with a ChatGPT account, which does not serve the API models.
-const defaultCodexTokenModel = "gpt-6.1-sol"
+const (
+	defaultClaudeModel = "claude-opus-5-5"
+	defaultOpenAIModel = "gpt-5.5"
+	// defaultCodexTokenModel is Codex's default with a ChatGPT account, which does not serve the API models.
+	defaultCodexTokenModel = "gpt-6.1-sol"
+)
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -211,7 +214,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if cfg.CloseDuplicates && cfg.IssuesRepository == "" {
 		return errors.New("CLOSE_DUPLICATES needs ISSUES_REPOSITORY")
 	}
-	eng, agent, model, err := newEngine(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
+	agent, model, err := selectAgent(os.Getenv("ENGINE"), os.Getenv("MODEL"), os.Getenv("LLM_API_KEY"))
 	if err != nil {
 		return err
 	}
@@ -239,7 +242,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer reader.Close()
 	reader.Daybreak = daybreak
 
-	return triage.Run(ctx, cfg, github.New(token), reader, eng, log)
+	return triage.Run(ctx, cfg, github.New(token), reader, log)
 }
 
 func parseSince(v string) (time.Time, error) {
@@ -257,28 +260,22 @@ func parseSince(v string) (time.Time, error) {
 	return t, nil
 }
 
-// newEngine returns the comparator engine, and the sandboxed agent and model the reader runs with. A Codex
-// access token cannot call the OpenAI API, so the comparator runs as a sandboxed agent too: no engine.
-func newEngine(name, model, apiKey string) (engine.Engine, string, string, error) {
+// selectAgent returns the sandboxed agent every model step runs as, and its model. A Codex access token cannot
+// call the OpenAI API, so it gets an agent of its own.
+func selectAgent(name, model, apiKey string) (string, string, error) {
 	if apiKey == "" {
-		return nil, "", "", errors.New("LLM_API_KEY is required")
+		return "", "", errors.New("LLM_API_KEY is required")
 	}
 
 	switch name {
 	case "", "claude":
-		if model == "" {
-			model = engine.DefaultClaudeModel
-		}
-		return engine.NewClaude(apiKey, model), "claude", model, nil
+		return "claude", cmp.Or(model, defaultClaudeModel), nil
 	case "openai":
 		if strings.HasPrefix(apiKey, "at-") {
-			return nil, "codex-token", cmp.Or(model, defaultCodexTokenModel), nil
+			return "codex-token", cmp.Or(model, defaultCodexTokenModel), nil
 		}
-		if model == "" {
-			model = engine.DefaultOpenAIModel
-		}
-		return engine.NewOpenAI(apiKey, model), "codex", model, nil
+		return "codex", cmp.Or(model, defaultOpenAIModel), nil
 	default:
-		return nil, "", "", fmt.Errorf("unknown ENGINE %q, expected claude or openai", name)
+		return "", "", fmt.Errorf("unknown ENGINE %q, expected claude or openai", name)
 	}
 }

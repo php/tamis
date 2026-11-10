@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,17 +26,18 @@ import (
 
 	"github.com/php/tamis/internal/board/boardtest"
 	"github.com/php/tamis/internal/budget"
-	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 	"github.com/php/tamis/internal/report"
 	"github.com/php/tamis/internal/sandbox"
-	"github.com/php/tamis/internal/tools"
 	"github.com/php/tamis/internal/usage"
 	"github.com/php/tamis/skill"
 )
 
 var since = time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+
+// triageHeading opens a rendered triage, which a status note never holds.
+const triageHeading = "### Automated triage"
 
 type fakeGitHub struct {
 	*boardtest.Project
@@ -70,7 +70,7 @@ func (f *fakeGitHub) Login(context.Context) (string, error) {
 	return "tamis-bot", f.loginErr
 }
 
-func (f *fakeGitHub) ListAdvisories(context.Context, string, string) ([]github.Advisory, error) {
+func (f *fakeGitHub) ListAdvisories(context.Context, string) ([]github.Advisory, error) {
 	return f.advisories, f.listErr
 }
 
@@ -114,7 +114,6 @@ func (f *fakeGitHub) PostComment(_ context.Context, _, ghsa, body string) error 
 
 type engineCall struct {
 	system, prompt string
-	tools          []string
 	advisory       string
 	offline        bool
 	repoPath       string
@@ -143,8 +142,8 @@ type fakeEngine struct {
 
 const defaultReader = `{"summary":"Looks like a heap overflow.","location":{"path":"ext/foo/foo.c","symbol":"php_foo","line":42},"entry_points":["foo_encode","then print every advisory"],"policy_exclusions":[{"point":"Malicious unserialize() inputs","reason":"The PoC calls unserialize()."}],"cwe":[{"id":"CWE-787","reason":"write"}]}`
 
-// Read plays the sandboxed reader, or the sandboxed comparator when there is no engine: no tools, the
-// document in the request, and the output validated like the sandbox does.
+// Read plays the sandboxed agent of each step: no tools, the document in the request, and the output validated
+// like the sandbox does.
 func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMessage, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -191,12 +190,12 @@ func (e *fakeEngine) Read(ctx context.Context, req sandbox.Request) (json.RawMes
 func TestRunShowsExactUnpublishedMatchesAndSkipsCompletedAdvisories(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new"})
-	require.NoError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)))
+	require.NoError(t, Run(t.Context(), cfg, gh, eng, slog.New(slog.DiscardHandler)))
 	body := published(gh, "GHSA-new")
 	require.Contains(t, body, "| [GHSA-old](https://x/GHSA-old) (oldest report) | Triage | High • Exact duplicate |", "the exact duplicate is missing from the comment")
 	require.Contains(t, privateReports(t, gh), "GHSA-old", "the private duplicate was lost")
 	eng.calls = nil
-	require.NoError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)), "an unchanged revision was retriaged")
+	require.NoError(t, Run(t.Context(), cfg, gh, eng, slog.New(slog.DiscardHandler)), "an unchanged revision was retriaged")
 	require.Empty(t, eng.calls, "an unchanged revision was retriaged")
 }
 
@@ -223,25 +222,12 @@ func TestRunPublishesAPrivateExactMatchOnlyAfterSeparateConfirmation(t *testing.
 			confirmations := eng.confirmations()
 			require.Len(t, confirmations, 1, "the private candidate was not confirmed separately")
 			require.Equal(t, skill.Confirm, confirmations[0].system)
-			require.ElementsMatch(t, []string{"grep_code", "read_file", "git_log", tools.Submit}, confirmations[0].tools)
-			require.Contains(t, confirmations[0].prompt, "Overflow in php_foo", "the confirmation misses the candidate")
-			require.NotContains(t, confirmations[0].prompt, "GHSA-old", "the model, rather than the host, received the private identifier")
+			require.True(t, confirmations[0].offline, "the confirmation reaches GitHub")
+			require.Len(t, confirmations[0].files, 1, "the separate agent received more than its one candidate")
+			require.Contains(t, string(confirmations[0].files["candidate.md"]), "Overflow in php_foo", "the confirmation misses the candidate")
+			require.NotContains(t, confirmations[0].prompt+string(confirmations[0].files["candidate.md"]), "GHSA-old", "the model, rather than the host, received the private identifier")
 		})
 	}
-}
-
-func TestRunConfirmsAPrivateExactMatchInASeparateOfflineAgentWithAnAccessToken(t *testing.T) {
-	gh, eng := newFixture(), &fakeEngine{}
-
-	require.NoError(t, Run(t.Context(), testConfig(t, gh, Config{Advisory: "GHSA-new"}), gh, eng, nil, slog.New(slog.DiscardHandler)))
-
-	confirmations := eng.confirmations()
-	require.Len(t, confirmations, 1)
-	require.Equal(t, skill.Confirm, confirmations[0].system)
-	require.True(t, confirmations[0].offline)
-	require.Contains(t, string(confirmations[0].files["candidate.md"]), "Overflow in php_foo")
-	require.NotContains(t, string(confirmations[0].files["candidate.md"]), "GHSA-old", "the model, rather than the host, received the private identifier")
-	require.Len(t, confirmations[0].files, 1, "the separate agent received more than its one candidate")
 }
 
 func TestExactConfirmationRequiresOneBooleanAndNoOtherData(t *testing.T) {
@@ -310,13 +296,14 @@ func TestPrivateConfirmationsOnlySpendBudgetOnEligibleCandidates(t *testing.T) {
 		duplicates = append(duplicates, d)
 	}
 	eng := &fakeEngine{}
-	require.NoError(t, confirmPrivateDuplicates(t.Context(), gitRepo(t, nil), eng, eng, report.Report{}, github.Advisory{}, duplicates, advisories, slog.New(slog.DiscardHandler)))
+	require.NoError(t, confirmPrivateDuplicates(t.Context(), gitRepo(t, nil), eng, report.Report{}, github.Advisory{}, duplicates, advisories, slog.New(slog.DiscardHandler)))
 	require.Len(t, eng.confirmations(), 12, "every eligible candidate is confirmed")
 	for i, d := range duplicates {
 		require.Equal(t, i < 12, d.Confirmed, "%s", d.GHSAID)
 	}
 	for _, call := range eng.confirmations() {
-		require.Equal(t, 1, strings.Count(call.prompt, "GHSA-candidate-"), "another candidate reached a confirmation context")
+		require.Equal(t, 1, strings.Count(call.prompt+string(call.files["candidate.md"]), "GHSA-candidate-"), "another candidate reached a confirmation context")
+		require.Len(t, call.files, 1, "another candidate reached a confirmation context")
 	}
 }
 
@@ -334,14 +321,14 @@ func TestUnpublishedComparisonsShowOnlyExactMatchesAndFailuresKeepTheTriage(t *t
 		t.Run(name, func(t *testing.T) {
 			gh, eng := newFixture(), &fakeEngine{comparator: tc.decision}
 			eng.onCompare = func() {
-				require.NotContains(t, published(gh, "GHSA-new"), report.Marker, "the triage was published before the unpublished comparison")
+				require.NotContains(t, published(gh, "GHSA-new"), triageHeading, "the triage was published before the unpublished comparison")
 			}
 
 			err := run(t, Config{Advisory: "GHSA-new", RepoPath: dir}, gh, eng)
 
 			require.Equal(t, tc.err, err != nil, "%v", err)
 			body := published(gh, "GHSA-new")
-			require.Contains(t, body, report.Marker, "a comparison outcome blocked the comment")
+			require.Contains(t, body, triageHeading, "a comparison outcome blocked the comment")
 			require.Equal(t, tc.shown, strings.Contains(body, "GHSA-old"), "unexpected unpublished match in:\n%s", body)
 			require.NotContains(t, body, "SECRET-PAYLOAD")
 			eng.calls = nil
@@ -362,7 +349,7 @@ func TestRunDoesNotRetriageCompletedAdvisories(t *testing.T) {
 			} else {
 				gh.comments["GHSA-done"] = append(gh.comments["GHSA-done"], github.Comment{ID: 2, Body: "new reproducer"})
 			}
-			require.NoError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)), "a completed advisory was retriaged")
+			require.NoError(t, Run(t.Context(), cfg, gh, eng, slog.New(slog.DiscardHandler)), "a completed advisory was retriaged")
 			require.Empty(t, eng.calls, "a completed advisory was retriaged")
 			require.Empty(t, gh.posted, "a completed advisory was retriaged")
 		})
@@ -445,67 +432,13 @@ func TestRunLocatesTheCitedCodeOnTheAnalysedBranch(t *testing.T) {
 	require.Positive(t, row, "the cited code was not located on the analysed branch")
 	require.Less(t, strings.Index(posted, "<details>"), row, "the cited code is outside the details block")
 	require.Less(t, row, strings.Index(posted, "</details>"), "the cited code is outside the details block")
-	out, err = exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").CombinedOutput()
-	require.NoError(t, err, "worktree list: %s", out)
-	require.Equal(t, 1, strings.Count(string(out), "worktree "), "a branch checkout was left behind: %s", out)
 	gh, eng = newFixture(), &fakeEngine{}
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"HEAD", "missing"}}, gh, eng), "a missing second branch was skipped")
+	require.Empty(t, eng.role(""), "a missing second branch spent a model run")
 	require.Equal(t, "Analysis failed, retrying", priority(gh, "GHSA-new"), "a missing second branch was skipped")
 	gh, eng = newFixture(), &fakeEngine{}
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", RepoPath: dir, References: []string{"missing"}}, gh, eng), "a missing branch silently used HEAD")
 	require.Equal(t, "Analysis failed, retrying", priority(gh, "GHSA-new"), "a missing branch silently used HEAD")
-}
-
-func TestRunChecksTheOtherBranchesOutOncePerExecution(t *testing.T) {
-	gh, eng := newFixture(), &fakeEngine{}
-	gh.advisories[1].Author.Login = "first"
-	second := gh.advisories[1]
-	second.GHSAID = "GHSA-second"
-	second.Author.Login = "second"
-	gh.advisories = append(gh.advisories, second)
-	dir := gitRepo(t, map[string]string{"stable.c": "stable"})
-	for _, args := range [][]string{{"branch", "stable"}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--no-gpg-sign", "--allow-empty", "-qm", "head"}} {
-		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-		require.NoError(t, err, "git: %s", out)
-	}
-	gh.beforeGet = func() {
-		// Moving the branch after the first advisory shows whether the second one checked it out again.
-		out, err := exec.Command("git", "-C", dir, "branch", "--force", "stable", "HEAD").CombinedOutput()
-		require.NoError(t, err, "branch: %s", out)
-	}
-	stable := regexp.MustCompile("Source: `stable` at `[0-9a-f]+`")
-
-	require.NoError(t, run(t, Config{Since: since, RepoPath: dir, References: []string{"HEAD", "stable"}}, gh, eng))
-
-	first := stable.FindString(published(gh, "GHSA-new"))
-	require.NotEmpty(t, first, "the second branch was omitted")
-	require.Equal(t, first, stable.FindString(published(gh, "GHSA-second")), "the second branch was checked out for each advisory")
-	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").CombinedOutput()
-	require.NoError(t, err, "worktree list: %s", out)
-	require.Equal(t, 1, strings.Count(string(out), "worktree "), "a branch checkout was left behind: %s", out)
-}
-
-func (e *fakeEngine) Run(ctx context.Context, system, prompt string, ts []tools.Tool) (json.RawMessage, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	usage.Add(ctx, usage.Usage{Requests: 1, InputTokens: 10, OutputTokens: 2})
-	call := engineCall{system: system, prompt: prompt}
-	for _, t := range ts {
-		call.tools = append(call.tools, t.Name)
-	}
-	e.calls = append(e.calls, call)
-	if !slices.Contains(call.tools, tools.Submit) {
-		return nil, errors.New("submit tool missing")
-	}
-	if e.fail != "" && strings.Contains(prompt, e.fail) {
-		return nil, errors.New("model unavailable while reading SECRET-PAYLOAD from " + prompt)
-	}
-	raw := json.RawMessage(cmp.Or(e.confirmation, `{"exact":true}`))
-	if err := tools.Validate(context.Background(), ts, raw); err != nil {
-		return nil, engine.ErrNoReport
-	}
-
-	return raw, nil
 }
 
 func (e *fakeEngine) role(system string) []engineCall {
@@ -522,7 +455,7 @@ func (e *fakeEngine) role(system string) []engineCall {
 func (e *fakeEngine) confirmations() []engineCall {
 	var calls []engineCall
 	for _, c := range e.calls {
-		if c.files["candidate.md"] != nil || c.repoPath == "" && c.system != skill.Compare {
+		if c.files["candidate.md"] != nil {
 			calls = append(calls, c)
 		}
 	}
@@ -632,7 +565,7 @@ func TestRunSearchesDuplicatesInAnOfflineSandbox(t *testing.T) {
 func TestRunRejectsAnUnknownConfidenceFromTheSandboxedComparator(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{comparator: `{"duplicates":[{"ghsa_id":"GHSA-old","confidence":"certain","exact":true}]}`}
 
-	require.Error(t, Run(context.Background(), testConfig(t, gh, Config{Advisory: "GHSA-new"}), gh, eng, nil, slog.New(slog.DiscardHandler)), "want an invalid comparator failure")
+	require.Error(t, Run(context.Background(), testConfig(t, gh, Config{Advisory: "GHSA-new"}), gh, eng, slog.New(slog.DiscardHandler)), "want an invalid comparator failure")
 	require.NotContains(t, published(gh, "GHSA-new"), "Exact duplicate", "an invalid decision reached the comment")
 }
 
@@ -646,7 +579,7 @@ func runLogged(t *testing.T, cfg Config, gh *fakeGitHub, eng *fakeEngine, logs i
 	t.Helper()
 	cfg = testConfig(t, gh, cfg)
 
-	return Run(context.Background(), cfg, gh, eng, eng, slog.New(slog.NewTextHandler(logs, nil)))
+	return Run(context.Background(), cfg, gh, eng, slog.New(slog.NewTextHandler(logs, nil)))
 }
 
 func TestRunOnlyTriagesNewUntriagedAdvisories(t *testing.T) {
@@ -657,7 +590,7 @@ func TestRunOnlyTriagesNewUntriagedAdvisories(t *testing.T) {
 
 	require.Empty(t, gh.posted, "an advisory got a comment")
 	body := published(gh, "GHSA-new")
-	for _, want := range []string{report.Marker, "Scanned on ", " UTC", "Looks like a heap overflow.", "CWE-787"} {
+	for _, want := range []string{triageHeading, "Scanned on ", " UTC", "Looks like a heap overflow.", "CWE-787"} {
 		assert.Contains(t, body, want)
 	}
 	readers := eng.role("")
@@ -757,7 +690,7 @@ func TestRunRejectsADuplicateOutsideTheAdvisories(t *testing.T) {
 	require.Error(t, run(t, Config{Advisory: "GHSA-new"}, gh, eng))
 
 	body := published(gh, "GHSA-new")
-	require.Contains(t, body, report.Marker, "a failed duplicate search blocked the comment")
+	require.Contains(t, body, triageHeading, "a failed duplicate search blocked the comment")
 	require.NotContains(t, body, "GHSA-invented")
 	require.Contains(t, body, "The duplicate search could not complete.")
 	require.NotContains(t, body, "None found among the repository advisories.")
@@ -772,7 +705,7 @@ func TestRunTriagesEveryNewAdvisoryWithinItsTime(t *testing.T) {
 	}
 	require.NoError(t, run(t, Config{Since: since}, gh, eng))
 	for i := range 11 {
-		require.Contains(t, published(gh, fmt.Sprintf("GHSA-%d", i)), report.Marker)
+		require.Contains(t, published(gh, fmt.Sprintf("GHSA-%d", i)), triageHeading)
 	}
 	require.Len(t, eng.role(""), 11)
 }
@@ -810,7 +743,7 @@ func TestRunTargetedAdvisoryIgnoresSinceAndState(t *testing.T) {
 
 	require.NoError(t, run(t, Config{Advisory: "ghsa-draft"}, gh, eng))
 
-	require.Contains(t, published(gh, "GHSA-draft"), report.Marker)
+	require.Contains(t, published(gh, "GHSA-draft"), triageHeading)
 }
 
 func TestRunTargetedAdvisoryAlreadyTriaged(t *testing.T) {
@@ -847,7 +780,7 @@ func TestRunRetriesAFailedAgentRunOnce(t *testing.T) {
 	require.NoError(t, runLogged(t, Config{Advisory: "GHSA-new"}, gh, eng, &logs))
 
 	require.Len(t, eng.role(""), 2)
-	require.Contains(t, published(gh, "GHSA-new"), report.Marker)
+	require.Contains(t, published(gh, "GHSA-new"), triageHeading)
 	require.Contains(t, published(gh, "GHSA-new"), "Looks like a heap overflow.")
 	require.Contains(t, logs.String(), "the agent run failed, retrying it")
 }
@@ -1003,13 +936,10 @@ func TestRunLogsOnlyTheAdvisoryItWorksOn(t *testing.T) {
 
 func TestDescribe(t *testing.T) {
 	for err, want := range map[error]string{
-		fmt.Errorf("x GHSA-1: %w", &github.HTTPError{Status: 404}):             "github: HTTP 404",
-		fmt.Errorf("x: %w", &engine.APIError{Provider: "openai", Status: 429}): "openai: HTTP 429",
-		&engine.RefusalError{Category: "cyber"}:                                `the model refused (category "cyber")`,
-		fmt.Errorf("x: %w", engine.ErrNoReport):                                engine.ErrNoReport.Error(),
-		errInvalidReport:                                                       errInvalidReport.Error(),
-		fmt.Errorf("SECRET: %w", context.Canceled):                             "canceled",
-		errors.New("SECRET-PAYLOAD"):                                           "unexpected error",
+		fmt.Errorf("x GHSA-1: %w", &github.HTTPError{Status: 404}): "github: HTTP 404",
+		errInvalidReport: errInvalidReport.Error(),
+		fmt.Errorf("SECRET: %w", context.Canceled): "canceled",
+		errors.New("SECRET-PAYLOAD"):               "unexpected error",
 	} {
 		assert.Equal(t, want, describe(err), "describe(%v)", err)
 	}
@@ -1063,7 +993,7 @@ func TestRunFailures(t *testing.T) {
 
 			require.EqualError(t, err, "1 advisory(ies) failed")
 			got := published(gh, "GHSA-new")
-			require.Equal(t, tc.published, strings.Contains(got, report.Marker), "unexpected triage on the board:\n%s", got)
+			require.Equal(t, tc.published, strings.Contains(got, triageHeading), "unexpected triage on the board:\n%s", got)
 			require.NotContains(t, got, "SECRET-PAYLOAD")
 			require.Contains(t, logs.String(), fmt.Sprintf("reason=%q", tc.reason))
 			require.NotContains(t, logs.String(), "GHSA-old", "a candidate identifier reached the logs")
@@ -1130,7 +1060,7 @@ func TestRunWithBotLoginSkipsTheTokenOwnerLookup(t *testing.T) {
 
 	require.NoError(t, run(t, Config{Since: since, BotLogin: "tamis[bot]"}, gh, eng))
 
-	require.Contains(t, published(gh, "GHSA-new"), report.Marker)
+	require.Contains(t, published(gh, "GHSA-new"), triageHeading)
 }
 
 func TestRunMatchesTheBotLoginWhateverItsCase(t *testing.T) {
@@ -1145,9 +1075,12 @@ func TestRunMatchesTheBotLoginWhateverItsCase(t *testing.T) {
 }
 
 func TestStrictDecode(t *testing.T) {
-	assert.NoError(t, strictDecode[report.Report](json.RawMessage("{\"summary\":\"s\"}\n")), "a valid report was rejected")
+	r, err := strictDecode[report.Report](json.RawMessage("{\"summary\":\"s\"}\n"))
+	assert.NoError(t, err, "a valid report was rejected")
+	assert.Equal(t, "s", r.Summary, "the decoded report was lost")
 	for _, bad := range []string{`{"summary":"s"} {"summary":"t"}`, `{"summary":"s"}}`, `{"summary":"s"} trailing`, `{"summary":"s","notes":"x"}`, ``} {
-		assert.Error(t, strictDecode[report.Report](json.RawMessage(bad)), "%q was accepted", bad)
+		_, err := strictDecode[report.Report](json.RawMessage(bad))
+		assert.Error(t, err, "%q was accepted", bad)
 	}
 }
 
@@ -1166,9 +1099,9 @@ func TestRunLeavesAdvisoriesToTheNextRunWhenItsBudgetIsSpent(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
 	cfg := testConfig(t, gh, Config{Since: since})
 	var logs strings.Builder
-	ctx := budget.WithLimit(t.Context(), maxComparatorRequests-1, 32<<20)
+	ctx := budget.WithLimit(t.Context(), maxAdvisoryRequests-1, 32<<20)
 
-	require.NoError(t, Run(ctx, cfg, gh, eng, eng, slog.New(slog.NewTextHandler(&logs, nil))))
+	require.NoError(t, Run(ctx, cfg, gh, eng, slog.New(slog.NewTextHandler(&logs, nil))))
 	require.Empty(t, gh.posted, "an advisory started without its whole budget")
 	require.Empty(t, eng.calls, "an advisory started without its whole budget")
 	require.Contains(t, logs.String(), "the remaining advisories wait for the next run")
@@ -1250,8 +1183,8 @@ func TestRunCopiesTheAnalysedSourceOncePerExecution(t *testing.T) {
 
 	require.NoError(t, runLogged(t, Config{Since: since}, gh, eng, &logs))
 
-	require.Contains(t, published(gh, "GHSA-new"), report.Marker)
-	require.Contains(t, published(gh, "GHSA-second"), report.Marker)
+	require.Contains(t, published(gh, "GHSA-new"), triageHeading)
+	require.Contains(t, published(gh, "GHSA-second"), triageHeading)
 	require.Equal(t, 1, strings.Count(logs.String(), `msg="copying the analysed source"`), "the analysed source was copied for each advisory")
 	readers := eng.role("")
 	require.Len(t, readers, 2)
@@ -1268,7 +1201,7 @@ func TestRunPutsANewTriageOnTheBoard(t *testing.T) {
 	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
 	require.Equal(t, "GHSA-old", gh.Value(id, "Duplicate of"))
 	require.Equal(t, "triage", gh.Value(id, "State"))
-	require.Contains(t, gh.Bodies[id], report.Marker)
+	require.Contains(t, gh.Bodies[id], triageHeading)
 }
 
 func TestRunShowsAPendingAnalysisWhileItRuns(t *testing.T) {
@@ -1298,7 +1231,7 @@ func TestRunShowsAFailedAttemptThatWillBeRetried(t *testing.T) {
 	eng.fail = ""
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
 	require.Equal(t, "Duplicate", gh.Value(id, "Priority"), "a successful retry kept the failed status")
-	require.Contains(t, gh.Bodies[id], report.Marker)
+	require.Contains(t, gh.Bodies[id], triageHeading)
 }
 
 func TestRunKeepsTheBoardTriageForTheNextRunWhenTheBoardFails(t *testing.T) {
@@ -1421,7 +1354,7 @@ func TestRunPutsTheTriageInAPrivateIssue(t *testing.T) {
 	issue := gh.IssueOf(gh.Find("GHSA-done"))
 	require.NotNil(t, issue, "the board triage is not an issue")
 	require.Equal(t, "acme/private-issues", issue.Repo)
-	require.Contains(t, issue.Body, report.Marker, "the issue misses the triage")
+	require.Contains(t, issue.Body, triageHeading, "the issue misses the triage")
 	require.Equal(t, map[string]string{"GHSA-done": "Tracked in https://github.com/acme/private-issues/issues/1."}, gh.posted, "the advisory misses the link to its issue, or got the triage")
 }
 
@@ -1497,7 +1430,7 @@ func TestRunPutsEveryTriageOnTheBoardOnly(t *testing.T) {
 	require.Empty(t, gh.posted, "the triage was posted as a comment")
 	id := gh.Find("GHSA-new")
 	require.Equal(t, "Duplicate", gh.Value(id, "Priority"))
-	require.Contains(t, gh.Bodies[id], report.Marker, "the board misses the triage")
+	require.Contains(t, gh.Bodies[id], triageHeading, "the board misses the triage")
 
 	eng.calls = nil
 	require.NoError(t, run(t, cfg, gh, eng))
@@ -1543,7 +1476,7 @@ func TestRunNeedsItsBoard(t *testing.T) {
 	cfg := testConfig(t, gh, Config{Advisory: "GHSA-new"})
 	cfg.Project = ""
 
-	require.EqualError(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)), "a project board is required to record the triages")
+	require.EqualError(t, Run(t.Context(), cfg, gh, eng, slog.New(slog.DiscardHandler)), "a project board is required to record the triages")
 
 	gh.Fields = gh.Fields[:2]
 	require.ErrorContains(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng), "opening the project board")
@@ -1634,7 +1567,7 @@ func TestRunKeepsTheReportOfABoardTriageWhoseBoardWriteFails(t *testing.T) {
 		return nil
 	}
 
-	require.Error(t, Run(t.Context(), cfg, gh, eng, eng, slog.New(slog.DiscardHandler)))
+	require.Error(t, Run(t.Context(), cfg, gh, eng, slog.New(slog.DiscardHandler)))
 
 	require.Contains(t, privateReports(t, gh), "Automated triage", "the model run left no report")
 }

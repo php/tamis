@@ -82,21 +82,6 @@ func TestExists(t *testing.T) {
 	}
 }
 
-func TestGrep(t *testing.T) {
-	r := newRepo(t)
-
-	got, err := r.Grep(`php_[a-z]+\(`, "ext")
-	require.NoError(t, err)
-	require.Contains(t, got, "ext/a.c:1:int php_overflow")
-
-	got, err = r.Grep("nothing_like_this", "")
-	require.NoError(t, err)
-	require.Equal(t, "no match", got)
-
-	_, err = r.Grep("(", "")
-	require.Error(t, err, "an invalid pattern should fail")
-}
-
 func TestHasSymbol(t *testing.T) {
 	r := newRepo(t)
 
@@ -107,33 +92,12 @@ func TestHasSymbol(t *testing.T) {
 	}
 }
 
-func TestLog(t *testing.T) {
-	r := newRepo(t)
-
-	got, err := r.Log("ext/a.c", "OVERFLOW")
-	require.NoError(t, err)
-	require.Contains(t, got, "Fix overflow in php_overflow")
-
-	got, err = r.Log("", "unrelated")
-	require.NoError(t, err)
-	require.Empty(t, got)
-}
-
-func TestTruncateLines(t *testing.T) {
-	got := truncateLines("a\nb\nc\n", 2)
-	require.Equal(t, "a\nb\n... 2 more lines, narrow the search\n", got)
-}
-
 func TestMissingRepository(t *testing.T) {
 	r := Repo{Dir: filepath.Join(t.TempDir(), "missing")}
 
 	_, err := r.ReadFile("a.c", 0, 0)
 	assert.Error(t, err, "ReadFile should fail")
 	assert.False(t, r.Exists("a.c"), "Exists should be false")
-	_, err = r.Grep("a", "")
-	assert.Error(t, err, "Grep should fail")
-	_, err = r.Log("", "")
-	assert.Error(t, err, "Log should fail")
 	_, err = r.HasSymbol("", "a")
 	assert.Error(t, err, "HasSymbol should fail")
 }

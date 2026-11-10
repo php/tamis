@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -23,12 +22,10 @@ import (
 
 	"github.com/php/tamis/internal/board"
 	"github.com/php/tamis/internal/budget"
-	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 	"github.com/php/tamis/internal/report"
 	"github.com/php/tamis/internal/sandbox"
-	"github.com/php/tamis/internal/tools"
 	"github.com/php/tamis/internal/usage"
 	"github.com/php/tamis/skill"
 )
@@ -39,8 +36,10 @@ const ProfilePath = ".github/tamis.md"
 var maxRunDuration = 3*time.Hour + 50*time.Minute
 
 const (
-	maxAdvisoryDuration   = 30 * time.Minute
-	maxComparatorRequests = 200
+	maxAdvisoryDuration = 30 * time.Minute
+	// maxAdvisoryRequests and maxAdvisoryBytes bound the model requests of one advisory, every agent included.
+	maxAdvisoryRequests   = 200
+	maxAdvisoryBytes      = 64 << 20
 	maxAttempts           = 3
 	parallelConfirmations = 4
 )
@@ -53,7 +52,7 @@ var (
 type GitHub interface {
 	report.IssueGetter
 	board.GitHub
-	ListAdvisories(ctx context.Context, repo, state string) ([]github.Advisory, error)
+	ListAdvisories(ctx context.Context, repo string) ([]github.Advisory, error)
 	GetAdvisory(ctx context.Context, repo, ghsa string) (github.Advisory, error)
 	Login(ctx context.Context) (string, error)
 	ListComments(ctx context.Context, repo, ghsa string) ([]github.Comment, error)
@@ -131,7 +130,7 @@ func (r retrying) Read(ctx context.Context, req sandbox.Request) (json.RawMessag
 
 // Run logs which advisory it works on and its steps, never report content nor raw errors. The action only
 // runs from a private repository, so its logs stay with the security team.
-func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, log *slog.Logger) error {
+func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, log *slog.Logger) error {
 	if cfg.OutputDir == "" || len(cfg.References) == 0 {
 		return errors.New("a private output directory and source references are required")
 	}
@@ -152,7 +151,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		}
 	}
 
-	all, err := gh.ListAdvisories(ctx, cfg.Repo, "")
+	all, err := gh.ListAdvisories(ctx, cfg.Repo)
 	if err != nil {
 		return errors.New("listing advisories: " + describe(err))
 	}
@@ -171,13 +170,11 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 	}
 	log.Info("advisories to check", "count", len(slices.DeleteFunc(slices.Clone(all), func(a github.Advisory) bool { return !selected(cfg, a) })))
 
-	// The first reference is copied once, then mounted read-only in every agent run of this execution. The
-	// other references are checked out once as worktrees, which the prune unregisters once their directory is gone.
+	// The first reference is copied once, then mounted read-only in every agent run of this execution.
 	sourceDir, err := os.MkdirTemp("", "tamis-source-")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = exec.Command("git", "-C", cfg.RepoPath, "worktree", "prune").Run() }()
 	defer os.RemoveAll(sourceDir)
 
 	var triaged, skipped, failed int
@@ -210,7 +207,7 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 			continue
 		}
 		// An advisory started without its whole budget would fail, the next run picks it up instead.
-		if !budget.Has(ctx, maxComparatorRequests, engine.RequestLimitBytes) {
+		if !budget.Has(ctx, maxAdvisoryRequests, maxAdvisoryBytes) {
 			log.Info("the run budget is spent, the remaining advisories wait for the next run")
 			break
 		}
@@ -236,10 +233,10 @@ func Run(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.E
 		}
 		reporters[strings.ToLower(a.Author.Login)] = true
 		log.Info("triaging", "attempt", failures+1)
-		advisoryCtx, spent := usage.Track(engine.WithRequestLimit(advisoryCtx, maxComparatorRequests))
+		advisoryCtx, spent := usage.Track(budget.WithLimit(advisoryCtx, maxAdvisoryRequests, maxAdvisoryBytes))
 		final := failures+1 >= maxAttempts
 
-		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, eng, b, a, all, comments, login, revision, final, sourceDir, log); err != nil {
+		if published, err := triageRevisions(advisoryCtx, cfg, gh, retrying{reader, log}, b, a, all, comments, login, revision, final, sourceDir, log); err != nil {
 			cancel()
 			log.Error("triage failed", "reason", describe(err), "usage", spent())
 			if keepAgentError(cfg, a.GHSAID, revision, err) != nil {
@@ -295,20 +292,10 @@ func keepAgentError(cfg Config, ghsa, revision string, err error) error {
 
 // describe turns an error into text that is safe to log, keeping only status codes and known reasons.
 func describe(err error) string {
-	var (
-		gh      *github.HTTPError
-		api     *engine.APIError
-		refusal *engine.RefusalError
-	)
+	var gh *github.HTTPError
 	switch {
 	case errors.As(err, &gh):
 		return gh.Error()
-	case errors.As(err, &api):
-		return api.Error()
-	case errors.As(err, &refusal):
-		return refusal.Error()
-	case errors.Is(err, engine.ErrNoReport):
-		return engine.ErrNoReport.Error()
 	case errors.Is(err, sandbox.ErrNoReport):
 		return sandbox.ErrNoReport.Error()
 	case errors.As(err, new(*sandbox.Error)):
@@ -356,11 +343,8 @@ func triage(ctx context.Context, cfg Config, gh GitHub, reader Reader, a github.
 		Report:   reportText(a),
 		Schema:   schema,
 		Validate: func(raw json.RawMessage) error {
-			if err := strictDecode[report.Report](raw); err != nil {
-				return err
-			}
-			var r report.Report
-			if err := json.Unmarshal(raw, &r); err != nil {
+			r, err := strictDecode[report.Report](raw)
+			if err != nil {
 				return err
 			}
 
@@ -438,13 +422,18 @@ type exactConfirmation struct {
 	Exact *bool `json:"exact"`
 }
 
-var exactConfirmationProperties = map[string]any{
-	"exact": map[string]any{"type": "boolean", "description": "Whether both reports describe the same concrete vulnerability, corrected by the same fix"},
+var exactConfirmationSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"exact": map[string]any{"type": "boolean", "description": "Whether both reports describe the same concrete vulnerability, corrected by the same fix"},
+	},
+	"required":             []string{"exact"},
+	"additionalProperties": false,
 }
 
 // confirmPrivateDuplicates separately checks the unpublished exact matches proposed by the global search.
 // Its output has no identifier; the host binds each result to the candidate it supplied.
-func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, r report.Report, a github.Advisory, duplicates []report.Duplicate, advisories map[string]github.Advisory, log *slog.Logger) error {
+func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reader, r report.Report, a github.Advisory, duplicates []report.Duplicate, advisories map[string]github.Advisory, log *slog.Logger) error {
 	type candidate struct {
 		index    int
 		advisory github.Advisory
@@ -473,7 +462,7 @@ func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reade
 					err = errors.New("an exact confirmation panicked")
 				}
 			}()
-			exact, err := confirmPrivateDuplicate(ctx, repoPath, reader, eng, clues, reportText(a), candidate.advisory)
+			exact, err := confirmPrivateDuplicate(ctx, repoPath, reader, clues, reportText(a), candidate.advisory)
 			if err == nil && exact {
 				duplicates[candidate.index].Confirmed = true
 			}
@@ -494,53 +483,36 @@ func confirmPrivateDuplicates(ctx context.Context, repoPath string, reader Reade
 	return err
 }
 
-func confirmPrivateDuplicate(ctx context.Context, repoPath string, reader Reader, eng engine.Engine, clues report.Comparison, text string, candidate github.Advisory) (bool, error) {
-	required := []string{"exact"}
-	var raw json.RawMessage
-	var err error
-	if eng != nil {
-		prompt, _ := json.Marshal(map[string]any{"new_report": text, "candidate": advisoryDocument(candidate), "clues": clues})
-		raw, err = eng.Run(ctx, skill.Confirm, "Compare these two documents and submit the decision:\n\n"+string(prompt), append(tools.Code(repo.Repo{Dir: repoPath, Context: ctx}), tools.Tool{
-			Name: tools.Submit, Description: "Submit the exact duplicate decision.", Properties: exactConfirmationProperties, Required: required,
-			Run: func(_ context.Context, input json.RawMessage) (string, error) {
-				return "", validateExactConfirmation(input)
-			},
-		}))
-	} else {
-		schema, schemaErr := json.Marshal(map[string]any{"type": "object", "properties": exactConfirmationProperties, "required": required, "additionalProperties": false})
-		if schemaErr != nil {
-			return false, schemaErr
-		}
-		cluesJSON, _ := json.Marshal(clues)
-		raw, err = reader.Read(ctx, sandbox.Request{
-			RepoPath: repoPath,
-			System:   skill.Confirm,
-			Prompt:   "Read the new report in /work/report.md and the candidate in /work/candidate.md. The repository and its history are read-only in /work/src. The verified code clues are " + string(cluesJSON) + ". Compare their concrete findings using the duplicate confirmation method. Write only the decision to /work/report.json following /work/schema.json and stop.",
-			Report:   text,
-			Schema:   schema,
-			Offline:  true,
-			Files:    map[string][]byte{"candidate.md": []byte(advisoryDocument(candidate))},
-			Validate: validateExactConfirmation,
-		})
-	}
+func confirmPrivateDuplicate(ctx context.Context, repoPath string, reader Reader, clues report.Comparison, text string, candidate github.Advisory) (bool, error) {
+	schema, err := json.Marshal(exactConfirmationSchema)
 	if err != nil {
 		return false, err
 	}
-	var confirmation exactConfirmation
-	if err := validateExactConfirmation(raw); err != nil {
+	cluesJSON, _ := json.Marshal(clues)
+	raw, err := reader.Read(ctx, sandbox.Request{
+		RepoPath: repoPath,
+		System:   skill.Confirm,
+		Prompt:   "Read the new report in /work/report.md and the candidate in /work/candidate.md. The repository and its history are read-only in /work/src. The verified code clues are " + string(cluesJSON) + ". Compare their concrete findings using the duplicate confirmation method. Write only the decision to /work/report.json following /work/schema.json and stop.",
+		Report:   text,
+		Schema:   schema,
+		Offline:  true,
+		Files:    map[string][]byte{"candidate.md": []byte(advisoryDocument(candidate))},
+		Validate: validateExactConfirmation,
+	})
+	if err != nil {
+		return false, err
+	}
+	confirmation, err := strictDecode[exactConfirmation](raw)
+	if err != nil || confirmation.Exact == nil {
 		return false, errInvalidReport
 	}
-	_ = json.Unmarshal(raw, &confirmation)
 
 	return *confirmation.Exact, nil
 }
 
 func validateExactConfirmation(raw json.RawMessage) error {
-	if err := strictDecode[exactConfirmation](raw); err != nil {
-		return err
-	}
-	var confirmation exactConfirmation
-	if err := json.Unmarshal(raw, &confirmation); err != nil {
+	confirmation, err := strictDecode[exactConfirmation](raw)
+	if err != nil {
 		return err
 	}
 	if confirmation.Exact == nil {
@@ -561,11 +533,10 @@ type duplicateSearch struct {
 }
 
 func decodeDuplicateSearch(raw json.RawMessage, files map[string][]byte) ([]report.Duplicate, error) {
-	if err := strictDecode[duplicateSearch](raw); err != nil {
+	found, err := strictDecode[duplicateSearch](raw)
+	if err != nil {
 		return nil, err
 	}
-	var found duplicateSearch
-	_ = json.Unmarshal(raw, &found)
 	if found.Duplicates == nil {
 		return nil, errors.New("duplicates must be an array, empty when no matches were found")
 	}
@@ -701,20 +672,20 @@ The repository is checked out read-only in /work/src, with its git history. You 
 Write your findings as JSON to /work/report.json, following the JSON schema in /work/schema.json exactly, as soon as you have a first answer, and keep it up to date as you learn more: your model calls are limited and the run can stop at any time. Stop once it is complete.`, repoName, a.GHSAID, policyHint)
 }
 
-// strictDecode checks that raw decodes into a T without unknown fields, so a misnamed field goes back to the agent.
+// strictDecode decodes raw into a T without unknown fields, so a misnamed field goes back to the agent.
 // Data after the value is refused too: json.Unmarshal rejects it later, when the agent can no longer fix it.
-func strictDecode[T any](raw json.RawMessage) error {
+func strictDecode[T any](raw json.RawMessage) (T, error) {
 	var v T
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&v); err != nil {
-		return err
+		return v, err
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return errors.New("unexpected data after the JSON object")
+		return v, errors.New("unexpected data after the JSON object")
 	}
 
-	return nil
+	return v, nil
 }
 
 func comparatorPrompt(c report.Comparison) string {

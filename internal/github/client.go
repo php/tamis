@@ -112,14 +112,9 @@ func (c *Client) Login(ctx context.Context) (string, error) {
 	return user.Login, err
 }
 
-// ListAdvisories returns the repository advisories, all states when state is empty.
-func (c *Client) ListAdvisories(ctx context.Context, repo, state string) ([]Advisory, error) {
-	q := url.Values{"per_page": {"100"}}
-	if state != "" {
-		q.Set("state", state)
-	}
-
-	return list[Advisory](ctx, c, fmt.Sprintf("%s/repos/%s/security-advisories?%s", c.BaseURL, repo, q.Encode()))
+// ListAdvisories returns the repository advisories, whatever their state.
+func (c *Client) ListAdvisories(ctx context.Context, repo string) ([]Advisory, error) {
+	return list[Advisory](ctx, c, fmt.Sprintf("%s/repos/%s/security-advisories?per_page=100", c.BaseURL, repo))
 }
 
 // UpdateAdvisory sets the given fields of an advisory, such as "state" or "credits". GitHub asks for the whole

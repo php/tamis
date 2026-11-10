@@ -24,7 +24,7 @@ The agent reports the faulty statement (file, function, line), the public entry 
 
 tamis rejects an unknown or mistyped field in the JSON and sends the error back to the agent for one correction round.
 
-When the run stops on its budget or on an error, tamis keeps a valid report already written in the private artifact and retries the advisory. The last attempt posts that report with a note that it may be incomplete.
+When the run stops on its budget or on an error, tamis keeps a valid report already written in the private artifact and retries the advisory. The last attempt puts that report on the board with a note that it may be incomplete.
 
 The agent analyses the first configured reference, where tamis locates the cited code, and the final report names the exact commit of every reference. A missing branch fails the triage.
 
@@ -39,7 +39,7 @@ One offline agent searches every other advisory of the repository for the same b
 
 tamis treats the report, the clues and the advisories as hostile data. The agent answers with the identifiers of the duplicates it found, each with a confidence and an exact flag. tamis refuses an identifier outside the advisories it gave.
 
-The private report keeps the full search result. tamis checks each unpublished candidate marked exact with high confidence again, in its own model context. That context receives the report, the candidate without its identifier, the checked clues and the code, and returns one `exact` boolean. Only the host knows which candidate the answer belongs to, and it copies a confirmed identifier into the public comment. All models share the advisory and run budgets. The log records the duration and usage of the confirmations and the number of confirmed candidates.
+The private report keeps the full search result. tamis checks each unpublished candidate marked exact with high confidence again, in its own model context. That context receives the report, the candidate without its identifier, the checked clues and the code, and returns one `exact` boolean. Only the host knows which candidate the answer belongs to, and it copies a confirmed identifier into the board item. All models share the advisory and run budgets. The log records the duration and usage of the confirmations and the number of confirmed candidates.
 
 Both stages compare concrete defects, secondary findings of a report included:
 

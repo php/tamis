@@ -37,21 +37,11 @@ func TestListAdvisoriesFollowsPagination(t *testing.T) {
 		fmt.Fprint(w, `[{"ghsa_id":"GHSA-2"}]`)
 	})
 
-	got, err := c.ListAdvisories(context.Background(), "o/r", "")
+	got, err := c.ListAdvisories(context.Background(), "o/r")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	require.Equal(t, "GHSA-1", got[0].GHSAID)
 	require.Equal(t, "GHSA-2", got[1].GHSAID)
-}
-
-func TestListAdvisoriesFiltersState(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "triage", r.URL.Query().Get("state"))
-		fmt.Fprint(w, `[]`)
-	})
-
-	_, err := c.ListAdvisories(context.Background(), "o/r", "triage")
-	require.NoError(t, err)
 }
 
 func TestPostComment(t *testing.T) {
@@ -366,7 +356,7 @@ func TestPaginationStaysOnTheAPIHost(t *testing.T) {
 		fmt.Fprint(w, `[{"ghsa_id":"GHSA-1"}]`)
 	})
 
-	got, err := c.ListAdvisories(context.Background(), "o/r", "")
+	got, err := c.ListAdvisories(context.Background(), "o/r")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, 1, calls)
