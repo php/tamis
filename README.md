@@ -59,9 +59,11 @@ flowchart LR
 
     adv -->|report and comments| tamis
     others -->|read with the App token| tamis
+    board -->|"items already triaged<br/>and failed attempts"| tamis
     tamis -->|report and source| reader
     reader -->|unauthenticated search| pub
     reader -->|report.json| tamis
+    pub -->|"existence, title and link<br/>of each cited issue"| tamis
     tamis -->|"report, checked clues,<br/>every other advisory"| dup
     dup -->|identifiers and confidence| tamis
     tamis -->|"candidate without<br/>its identifier"| confirm
