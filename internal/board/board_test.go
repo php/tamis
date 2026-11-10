@@ -993,6 +993,14 @@ func TestPutKeepsTheReasonOfAnIssueClosedAsADuplicate(t *testing.T) {
 	}
 }
 
+func TestPutReopensTheIssueOfADuplicateBackInDraft(t *testing.T) {
+	p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "s", State: "draft", CreatedAt: reported}, Duplicate, &Triage{DuplicateOf: "GHSA-orig"}, ""))
+
+	require.Equal(t, "open", p.IssueOf(p.Find("GHSA-dup")).State)
+}
+
 func TestCloseDuplicatesCreditsTheOldestReportOfTheChain(t *testing.T) {
 	p, b := closedAsDuplicate(t, "duplicate", "GHSA-mid")
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-mid", Summary: "s", State: "triage", CreatedAt: reported}, Duplicate, &Triage{DuplicateOf: "GHSA-orig"}, ""))
@@ -1035,6 +1043,23 @@ func TestCloseDuplicatesLeavesTheOtherReportsAlone(t *testing.T) {
 			require.Empty(t, f.comments)
 		})
 	}
+}
+
+// An advisory reopened by hand after tamis closed it as a duplicate stays open, and its issue opens again.
+func TestCloseDuplicatesLeavesAReopenedReportAlone(t *testing.T) {
+	p, b := closedAsDuplicate(t, "duplicate", "GHSA-orig")
+	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-orig", State: "triage"}, {GHSAID: "GHSA-dup", State: "closed"}}))
+	b, err := Open(t.Context(), p, p, "acme/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	f := newAdvisories(github.Advisory{GHSAID: "GHSA-orig", State: "triage"})
+
+	require.NoError(t, b.CloseDuplicates(t.Context(), f, "php/php-src", f.list()))
+	require.NoError(t, b.Sync(t.Context(), f.list()))
+
+	require.Zero(t, f.updates)
+	require.Empty(t, f.comments)
+	require.Equal(t, "triage", f.byID["GHSA-dup"].State)
+	require.Equal(t, "open", p.IssueOf(p.Find("GHSA-dup")).State)
 }
 
 func TestCloseDuplicatesKeepsTheReportOpenUntilItsCommentIsPosted(t *testing.T) {

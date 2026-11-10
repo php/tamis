@@ -474,8 +474,8 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 		}
 	}
 	// Sync compares the advisory with the state written below, so it would leave the issue as it is.
-	if it.issue != 0 && it.closedAs != "duplicate" && it.state != "" && it.state != a.State {
-		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, issueState(a.State)); err != nil {
+	if st := issueState(a.State); it.issue != 0 && (it.closedAs != "duplicate" || st["state"] == "open") && it.state != "" && it.state != a.State {
+		if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, st); err != nil {
 			return err
 		}
 	}
@@ -668,7 +668,8 @@ func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string,
 	var errs []error
 	for i, a := range advisories {
 		it := b.items[strings.ToLower(a.GHSAID)]
-		if it == nil || it.closedAs != "duplicate" || it.duplicateOf == "" || a.State != "triage" && a.State != "draft" {
+		// An advisory whose state changed since the last run was reopened by hand, and Sync then reopens its issue.
+		if it == nil || it.closedAs != "duplicate" || it.duplicateOf == "" || a.State != "triage" && a.State != "draft" || it.state != a.State {
 			continue
 		}
 		// A Duplicate of chain edited by hand into a loop has no oldest report, the one it stops at names another.
@@ -766,8 +767,8 @@ func (b *Board) Sync(ctx context.Context, advisories []github.Advisory) error {
 		var values []github.FieldValue
 		if state, ok := states[ghsa]; ok && state != it.state {
 			// An issue a maintainer closed as a duplicate keeps that reason once its advisory closes.
-			if it.issue != 0 && it.closedAs != "duplicate" {
-				if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, issueState(state)); err != nil {
+			if st := issueState(state); it.issue != 0 && (it.closedAs != "duplicate" || st["state"] == "open") {
+				if err := b.ig.UpdateIssue(ctx, b.issues, it.issue, st); err != nil {
 					errs = append(errs, err)
 					continue
 				}
