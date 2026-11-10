@@ -4,18 +4,18 @@ tamis runs as a scheduled GitHub Actions workflow. You need a GitHub App, a priv
 
 ## Setup in one command
 
-The tamis binary of a [release](https://github.com/php/tamis/releases) does steps 1 to 3, and step 5 with `-board`, as an organisation owner:
+The tamis binary of a [release](https://github.com/php/tamis/releases) does steps 1 to 3 and step 5, as an organisation owner:
 
 ```bash
 gh auth refresh -s project,workflow
 GH_TOKEN=$(gh auth token) LLM_API_KEY=sk-... tamis init -repository your-org/your-project -references "master origin/release-branch"
 ```
 
-It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name, `-board` creates the project board instead of posting comments, and `-packs php-src` turns on the [guidance packs](configuration.md#guidance-packs) of the project. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
+It opens your browser to confirm the GitHub App, then creates the private `your-org/tamis-runner` repository with its `tamis` environment, the App credentials and the provider key as secrets, and the workflow pinned to the latest release. `-runner` names another repository, `-engine openai` takes an OpenAI key, `-app-name` replaces the `your-org-tamis` App name, and `-packs php-src` turns on the [guidance packs](configuration.md#guidance-packs) of the project. Install the App from the address it prints, then go on with [the first run](#4-first-run). The sections below do the same by hand.
 
 ## 1. Create the GitHub App
 
-Open this address with `YOUR-ORG` replaced by your organisation name. The form comes pre-filled with the only permission tamis needs, "Repository security advisories" in read and write, and no webhook.
+Open this address with `YOUR-ORG` replaced by your organisation name. The form comes pre-filled with the "Repository security advisories" permission in read and write, and no webhook. Add the organisation "Projects" permission in read and write, which the [project board](#5-project-board) needs.
 
 ```text
 https://github.com/organizations/YOUR-ORG/settings/apps/new?name=YOUR-ORG-tamis&description=First-pass%20triage%20of%20new%20security%20advisories&url=https://github.com/php/tamis&public=false&webhook_active=false&repository_advisories=write
@@ -27,9 +27,9 @@ Once the App exists:
 2. Generate a private key.
 3. Install it on the project repository only, with "Only select repositories".
 
-tamis posts as `<slug>[bot]` and recognises its own comments by that login.
+tamis posts as `<slug>[bot]` and leaves its own comments out of the report it reads.
 
-A personal access token of a repository security manager with the `repository_advisories:write` scope also works. tamis then posts under that account, and you can omit `bot-login`.
+A personal access token of a repository security manager with the `repository_advisories:write` scope and write access to the project board also works. tamis then posts under that account, and you can omit `bot-login`.
 
 ## 2. Create a private repository
 
@@ -54,21 +54,22 @@ Copy the workflow from the [README](../README.md#quick-start), then:
 - replace `your-org`, `your-project`, `your-app-slug` and the commit placeholder,
 - pin the full SHA of a reviewed commit, since the action refuses a branch or tag, and review later updates in the private repository,
 - set `since` to today's date, so tamis only processes advisories in the `triage` state created after it,
+- set `project` to the [project board](#5-project-board),
 - set `references` to every branch your security policy covers, default branch first. tamis analyses the report and locates the cited code on the first one.
 
 Keep `persist-credentials: false` on the checkout so no token lands in `.git/config`, and `fetch-depth: 0` so the agent can read the history.
 
 ## 4. First run
 
-Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis triages that advisory whatever its state and date, and puts it on the board, or posts the comment on it with `comment: true`.
+Trigger the workflow by hand with the `advisory` input set to a test GHSA. tamis triages that advisory whatever its state and date, and puts it on the board.
 
-Download the private `tamis-reports` artifact and check that the comment names embargoed advisories only as exact duplicates. Then let the schedule take over. Artifact access follows the permissions of the private repository, so grant it to the security team only.
+Download the private `tamis-reports` artifact and check that the board item names embargoed advisories only as exact duplicates. Then let the schedule take over. Artifact access follows the permissions of the private repository, so grant it to the security team only.
 
 GitHub Actions has no trigger for security advisories, so the schedule polls every 15 minutes. A run with no new advisory neither starts the agent nor calls the model.
 
 ## 5. Project board
 
-tamis can keep a private organisation project in sync with the advisories, one draft item each, so the security team sorts them by priority. Give the App the organisation "Projects" permission in read and write, then create the project with the tamis binary of a [release](https://github.com/php/tamis/releases), as an organisation member allowed to create projects:
+tamis puts its triages on a private organisation project, one item per advisory, so the security team sorts them by priority. Give the App the organisation "Projects" permission in read and write, then create the project with the tamis binary of a [release](https://github.com/php/tamis/releases), as an organisation member allowed to create projects:
 
 ```bash
 gh auth refresh -s project
@@ -93,19 +94,19 @@ The command prints the project as `your-org/NUMBER`. It creates a private projec
 | `Original report` | Text | |
 | `Attempts` | Number | |
 
-Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, still triages and comments with `comment: true` and skips every advisory without it, and fails the run so the error shows.
+Then set `project` to `your-org/NUMBER`. When the project is public, or a field or an option is missing or renamed, tamis leaves the board out of the run, skips every advisory, and fails the run so the error shows.
 
 The code sets `Priority`:
 
 - `To triage` for a report that is no duplicate, which the views order by `Severity`,
-- `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
-- `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
+- `Duplicate` behind the oldest high-confidence exact duplicate the triage shows, which `Duplicate of` names,
+- `Analysis pending` while an analysis runs, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage.
 
 The model estimates `Severity` from the security policy and its CVSS vector, and ignores the one the reporter claims. A policy or a guidance pack can set it below the vector's rating, as the `php-src` pack does for crashes. `Duplicates` counts the items that name the advisory in `Duplicate of`, or with `issues-repository` the sub-issues its issue gets, the duplicates of its duplicates included. `Component` is the directory of the extension, SAPI or subsystem the model names, such as `sapi/fpm` for FastCGI code a report reaches through FPM, once tamis checks the repository has that directory. Without one, tamis takes the directory of the faulty statement two levels deep, and leaves it empty when the statement was not located. `Upstream` names the project the faulty code is bundled from, such as `lexbor` in php-src, when the fix belongs to that project, and stays empty for the repository's own code. A project created before `Upstream` existed needs that field before upgrading tamis: `gh project field-create NUMBER --owner your-org --name Upstream --data-type TEXT`. `Original report` holds the oldest report of a group of duplicates, on that report and on each of its duplicates, so a view grouped by it shows each original with its duplicates.
 
 At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to `Duplicate of` lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft -Priority:Duplicate` sorted by `Severity` then `Reported`. A board laid out before `To triage` existed needs that option before upgrading tamis, and the next run moves to it the `Look first` and `When possible` items that have `Policy exclusion` and `Located` set. Its `Triage` view still sorts on `Priority`, where those items now tie, so sort it by hand on `Severity` then `Reported` and filter it on `State:triage,draft -Priority:Duplicate`.
 
-An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Analysis failed` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.
+Deleting an item by hand triggers a new triage of its advisory on the next run.
 
 With `issues-repository` set, for example to `your-org/your-project-security`, new items are issues of that repository instead of drafts, and each duplicate becomes a sub-issue of its `Original report`. Once that report leaves `triage` and `draft`, its duplicates still waiting move under the oldest of them, so a view filtered on `State` shows them, and that issue gets a comment naming the report it left. tamis closes an issue when its advisory is published, closed or withdrawn. Everyone with access to that repository reads the reports, and each new issue notifies its watchers. tamis refuses a public repository and the repository of the advisories, and then leaves the board out of the run.
 
@@ -137,4 +138,4 @@ Then pass `issues-token: ${{ steps.issues.outputs.token }}`. The App needs the "
 
 With `close-duplicates: true`, closing an issue as a duplicate decides its report. At the start of the next run, tamis credits the reporter as `reporter` on the `Original report` of the issue when that report is still in `triage` or `draft`, comments on the advisory to name that report, and closes it. A note on the issue then names the original and the login credited on it. Reopening the advisory afterwards reopens its issue, and tamis leaves both open. The original is always the one of `Original report`, whichever issue the duplicate was closed against, and an advisory without one stays as it is. The comment names the original even under embargo, and whoever can close an issue of that repository can then close an advisory.
 
-With `comment` left at `false`, tamis posts nothing on the advisories but the comment of `close-duplicates`. The item of an advisory says it was triaged, `Attempts` counts its failed attempts in place of the failure comments, and deleting an item triages its advisory again on the next run.
+With `comment` left at `false`, tamis posts nothing on the advisories but the comment of `close-duplicates`. With `comment: true` and `issues-repository`, each advisory also gets a comment linking it to the issue tamis creates for it, which notifies its reporter. The item of an advisory says it was triaged, `Attempts` counts its failed attempts, and deleting an item triages its advisory again on the next run.

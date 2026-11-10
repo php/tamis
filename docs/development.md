@@ -79,10 +79,10 @@ It needs the [Renovate GitHub App](https://github.com/apps/renovate) installed o
 tamis reads its configuration from environment variables, so it runs on any machine with Docker. From a checkout of the target repository:
 
 ```bash
-REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=tamis-agent:claude REFERENCES=HEAD OUTPUT_DIR=/private/path/to/reports ./tamis
+REPOSITORY=your-org/your-project REPO_PATH=. ADVISORY=GHSA-xxxx-xxxx-xxxx ENGINE=claude GH_TOKEN="$(gh auth token)" LLM_API_KEY="$ANTHROPIC_API_KEY" RUNNER_IMAGE=tamis-agent:claude REFERENCES=HEAD PROJECT=your-org/NUMBER OUTPUT_DIR=/private/path/to/reports ./tamis
 ```
 
-tamis posts the comment for real. It skips an advisory that already has a completed comment from the configured bot, even after edits to the report or new followup comments.
+tamis writes the board item for real. It skips an advisory whose item already holds a triage, even after edits to the report or new followup comments.
 
 ## Layout
 

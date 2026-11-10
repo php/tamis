@@ -5,10 +5,10 @@
 | Input | Default | Description |
 |---|---|---|
 | `api-key` | | Required. API key of the model provider, or a Codex access token with `engine: openai`. |
-| `github-token` | | Required. Token able to read and comment the repository advisories. |
+| `github-token` | | Required. Token able to read and comment the repository advisories, and to write `project`. |
 | `references` | | Required, at most ten. Whitespace-separated local git references, one per supported branch. tamis analyses the first and locates the cited code on it. A missing reference fails the analysis. |
 | `packs` | | Whitespace-separated [guidance packs](#guidance-packs) added to the agent's method, such as `php-src`. An unknown pack fails the run. |
-| `since` | | Triage only advisories created after this date, `2026-10-22` or RFC 3339. Required with `comment: true` unless `advisory` is set. Without it, every advisory in triage goes on the board. |
+| `since` | | Triage only advisories created after this date, `2026-10-22` or RFC 3339. Required with `comment: true` unless `advisory` is set, so existing advisories get no comment. Without it, every advisory in triage goes on the board. |
 | `advisory` | | Triage this GHSA only, whatever its state and creation date. |
 | `bot-login` | Owner of the token | Login tamis posts as, such as `my-app[bot]`. Required with a GitHub App token. |
 | `repository` | Current repository | Repository owning the advisories. |
@@ -16,8 +16,8 @@
 | `engine` | `claude` | `claude` for Claude Code and the Anthropic API, `openai` for Codex and the OpenAI API. |
 | `model` | `claude-opus-5-5` or `gpt-5.5` | Model of the reader, the duplicate search and the exact confirmation. `gpt-6.1-sol` with a Codex access token. |
 | `daybreak` | `false` | Turns on OpenAI's Daybreak cyber access program in Codex. Needs `engine: openai` and an API key whose organisation OpenAI approved for it. |
-| `comment` | `false` | Post the triage as a comment on the advisory, and with `issues-repository` a comment linking each advisory to the issue tamis creates for it. Off, every triage only reaches `project`, which must then be set, and the board records the failed attempts in `Attempts`. |
-| `project` | | Private organisation project kept in sync with the advisories, as `org/number`. See [the project board](setup.md#5-project-board). |
+| `comment` | `false` | With `issues-repository`, post on each advisory a comment linking it to the issue tamis creates for it. |
+| `project` | | Required. Private organisation project the triages go on, as `org/number`, which records the failed attempts in `Attempts`. See [the project board](setup.md#5-project-board). |
 | `issues-repository` | | Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. See [the project board](setup.md#5-project-board). |
 | `issues-token` | | Installation token for `issues-repository` only, with the "Issues" and organisation "Projects" permissions in read and write. Required with `issues-repository`. |
 | `close-duplicates` | `false` | Closes the advisory of an issue a maintainer closed as a duplicate. Needs `issues-repository`. See [the project board](setup.md#5-project-board). |
@@ -27,7 +27,7 @@ The action refuses to run from a public workflow repository or from a `uses:` th
 
 Outside GitHub Actions, tamis reads the same settings from environment variables: `LLM_API_KEY`, `GH_TOKEN`, `BOT_LOGIN`, `REPOSITORY`, `REPO_PATH`, `SINCE`, `ADVISORY`, `ENGINE`, `MODEL`, `DAYBREAK`, `RUNNER_IMAGE`, `REFERENCES`, `PROJECT`, `ISSUES_REPOSITORY`, `ISSUES_TOKEN`, `CLOSE_DUPLICATES`, `COMMENT` and `PACKS`. `OUTPUT_DIR` must name a private directory for the reports. The action creates it in the runner's temporary storage and uploads it to the workflow repository with a seven-day retention.
 
-A local run alone also reads `FORCE=true`, which triages every selected advisory again, `ADVISORY` alone or every one in triage, and updates its board item even when it already holds a triage. It needs `COMMENT` off, and a failed new triage leaves the previous one on the board. The action has no such input.
+A local run alone also reads `FORCE=true`, which triages every selected advisory again, `ADVISORY` alone or every one in triage, and updates its board item even when it already holds a triage. A failed new triage leaves the previous one on the board. The action has no such input.
 
 ## Source branches
 
@@ -42,7 +42,6 @@ The private artifact holds, per advisory:
 | File | Contents |
 |---|---|
 | `.md` | The full report, with every duplicate the global search proposed and any duplicate search or confirmation that could not complete |
-| `.comment.md` | The text the reporter sees, limited to the published exact duplicates and to the unpublished exact duplicates that passed the [one-candidate confirmation](how-it-works.md#3-duplicate-search) |
 | `.agent-error.txt` | Written when an agent run fails. It keeps the agent's error output and the error events of its JSON output, which may quote the report. |
 
 Each report names the source commit and the input revision it covers.
@@ -86,7 +85,7 @@ The agent checks the report against the files that define what the project treat
 1. `SECURITY` with a `.md`, `.markdown`, `.rst`, `.txt` or `.adoc` extension, in any case,
 2. then `AGENTS.md` and `CLAUDE.md`.
 
-The comment lists the files the agent checked. Without any of them, tamis leaves the section out.
+The triage lists the files the agent checked. Without any of them, tamis leaves the section out.
 
 ## Engines
 

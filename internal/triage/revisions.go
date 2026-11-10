@@ -49,7 +49,7 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, b *board.Board, a github.Advisory, all []github.Advisory, comments []github.Comment, backfill bool, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, b *board.Board, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
 	var comparisonErr error
 	var others []github.Advisory
 	byID := map[string]github.Advisory{}
@@ -107,7 +107,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 		if r.Incomplete != nil {
 			continue
 		}
-		// A failed duplicate search leaves the duplicates out of the comment rather than blocking it.
+		// A failed duplicate search leaves the duplicates out of the triage rather than blocking it.
 		duplicates, err := findDuplicates(ctx, path, reader, r, input, others, log)
 		if err != nil {
 			comparisonErr = err
@@ -145,44 +145,21 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	if keepAgentError(cfg, a.GHSAID, revision, r.Incomplete) != nil {
 		log.Error("the agent error could not be kept in the private reports")
 	}
-	// A posted report closes the advisory, so a partial one is only posted by the last attempt.
+	// The report is kept before a board write that may fail.
+	if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
+		return false, err
+	}
+	// A published report ends the attempts, so a partial one is only published by the last attempt.
 	if r.Incomplete != nil && !final {
 		log.Info("the report is incomplete, the advisory will be retried")
-		if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
-			return false, err
-		}
 		return false, errIncompleteReport
 	}
-	// A backfill publishes on the board only, so its report is kept before a board write that may fail.
-	if backfill {
-		if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
-			return false, err
-		}
-	}
-	// Without its item, the next run triages the advisory again for the board.
-	if b != nil {
-		t := board.TriageOf(r)
-		if err := b.Put(ctx, a, t.Priority(), &t, body); err != nil {
-			// The board is where a backfill publishes, so the item gets the failed status instead of staying pending.
-			if backfill {
-				return false, err
-			}
-			log.Error("the project board could not be updated", "reason", describe(err))
-		}
-	}
-	if backfill {
-		return true, comparisonErr
-	}
-	if err := os.WriteFile(base+".comment.md", []byte(body), 0o600); err != nil {
+	// The board is where the triage is published, so a failed write gives the item the failed status instead.
+	t := board.TriageOf(r)
+	if err := b.Put(ctx, a, t.Priority(), &t, body); err != nil {
 		return false, err
 	}
-	log.Info("posting the comment")
-	if err := gh.PostComment(ctx, cfg.Repo, a.GHSAID, body); err != nil {
-		return false, err
-	}
-	if err := os.WriteFile(base+".md", []byte(private), 0o600); err != nil {
-		return true, err
-	}
+
 	return true, comparisonErr
 }
 

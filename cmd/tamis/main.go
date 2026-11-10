@@ -85,7 +85,6 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	references := fs.String("references", "", "whitespace-separated git references of every supported branch, the analysed one first")
 	provider := fs.String("engine", "claude", "LLM provider, claude or openai")
 	appName := fs.String("app-name", "", `name of the GitHub App, "<org>-tamis" by default`)
-	withBoard := fs.Bool("board", false, "also create a private project board and fill it instead of commenting")
 	packs := fs.String("packs", "", "whitespace-separated guidance packs added to the agent's method, such as php-src")
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
@@ -97,7 +96,7 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 	org, _, _ := strings.Cut(*repository, "/")
 	refs := strings.Fields(*references)
 	if org == "" || len(refs) == 0 {
-		return errors.New("usage: tamis init -repository org/name -references \"main ...\" [-runner name] [-engine claude|openai] [-app-name name] [-board] [-packs \"php-src ...\"]")
+		return errors.New("usage: tamis init -repository org/name -references \"main ...\" [-runner name] [-engine claude|openai] [-app-name name] [-packs \"php-src ...\"]")
 	}
 	if len(refs) > 10 {
 		return errors.New("-references must list at most ten references")
@@ -120,7 +119,6 @@ func initProject(ctx context.Context, args []string, out io.Writer) error {
 		APIKey:     apiKey,
 		AppName:    cmp.Or(*appName, org+"-tamis"),
 		Since:      time.Now().UTC().Format(time.DateOnly),
-		Board:      *withBoard,
 		Packs:      strings.Fields(*packs),
 	}
 	app := func(ctx context.Context, org string, manifest map[string]any) (string, error) {
@@ -173,20 +171,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	comment := false
 	if v := os.Getenv("COMMENT"); v != "" {
-		if comment, err = strconv.ParseBool(v); err != nil {
+		if cfg.Link, err = strconv.ParseBool(v); err != nil {
 			return fmt.Errorf("COMMENT: %w", err)
 		}
 	}
-	cfg.NoComment = !comment
 	if v := os.Getenv("FORCE"); v != "" {
 		if cfg.Force, err = strconv.ParseBool(v); err != nil {
 			return fmt.Errorf("FORCE: %w", err)
 		}
 	}
-	// Without comments, triaging the backlog only fills the private board, so every advisory in triage goes.
-	if since.IsZero() && cfg.Advisory == "" && comment {
+	// Without comments, triaging the backlog only fills the private board, so every advisory in triage goes. With
+	// them, each of those advisories would get a comment.
+	if since.IsZero() && cfg.Advisory == "" && cfg.Link {
 		return errors.New("SINCE is required with COMMENT unless ADVISORY is set, so that existing advisories are left alone")
 	}
 	cfg.Since = since

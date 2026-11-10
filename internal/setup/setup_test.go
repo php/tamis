@@ -133,7 +133,7 @@ func step(t *testing.T, workflow string) map[string]string {
 	return nil
 }
 
-func TestRunInstallsTamisWithComments(t *testing.T) {
+func TestRunInstallsTamisWithItsBoard(t *testing.T) {
 	gh, fl := newFake(), &flow{}
 
 	install, err := Run(t.Context(), config(), gh, fl.run, io.Discard)
@@ -141,7 +141,7 @@ func TestRunInstallsTamisWithComments(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://github.com/apps/acme-tamis/installations/new", install)
 	require.Equal(t, "acme", fl.org)
-	require.Equal(t, map[string]string{"repository_advisories": "write"}, fl.manifest["default_permissions"])
+	require.Equal(t, map[string]string{"repository_advisories": "write", "organization_projects": "write"}, fl.manifest["default_permissions"])
 	require.Equal(t, []string{"acme/tamis-runner"}, gh.created)
 	require.Equal(t, "main", gh.branch)
 	require.Equal(t, map[string]string{"TAMIS_CLIENT_ID": "Iv1"}, gh.variables)
@@ -155,28 +155,25 @@ func TestRunInstallsTamisWithComments(t *testing.T) {
 		"github-token": "${{ steps.app.outputs.token }}",
 		"bot-login":    "acme-tamis[bot]",
 		"references":   "main origin/release-1",
-		"comment":      "true",
+		"project":      "acme/16",
 	}, with)
-	require.Empty(t, gh.Views, "no board without -board")
+	require.Len(t, gh.Views, 1)
 }
 
-func TestRunInstallsTamisWithABoardAndOpenAI(t *testing.T) {
+func TestRunInstallsTamisWithOpenAI(t *testing.T) {
 	gh, fl := newFake(), &flow{}
 	cfg := config()
-	cfg.Board, cfg.Engine, cfg.Packs = true, "openai", []string{"php-src"}
+	cfg.Engine, cfg.Packs = "openai", []string{"php-src"}
 
 	_, err := Run(t.Context(), cfg, gh, fl.run, io.Discard)
 
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{"repository_advisories": "write", "organization_projects": "write"}, fl.manifest["default_permissions"])
 	require.Equal(t, map[string]string{"TAMIS_PRIVATE_KEY": "PEM", "OPENAI_API_KEY": "sk-test"}, gh.secrets)
 	with := step(t, gh.files["acme/tamis-runner/.github/workflows/tamis.yml"])
 	require.Equal(t, "acme/16", with["project"])
 	require.Equal(t, "openai", with["engine"])
 	require.Equal(t, "php-src", with["packs"])
 	require.Equal(t, "${{ secrets.OPENAI_API_KEY }}", with["api-key"])
-	require.NotContains(t, with, "comment")
-	require.Len(t, gh.Views, 1)
 }
 
 func TestRunStopsBeforeCreatingAnything(t *testing.T) {
@@ -216,10 +213,7 @@ func TestRunReportsAFailedSecret(t *testing.T) {
 func TestRunReportsAFailedBoard(t *testing.T) {
 	gh := newFake()
 	gh.Err = errors.New("boom")
-	cfg := config()
-	cfg.Board = true
-
-	_, err := Run(t.Context(), cfg, gh, (&flow{}).run, io.Discard)
+	_, err := Run(t.Context(), config(), gh, (&flow{}).run, io.Discard)
 
 	require.EqualError(t, err, "creating a project of acme: boom")
 	require.Empty(t, gh.files)

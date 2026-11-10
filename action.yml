@@ -1,5 +1,5 @@
 name: Tamis Security
-description: First-pass LLM triage of new GitHub security advisories, on a private project board or as an advisory comment.
+description: First-pass LLM triage of new GitHub security advisories, on a private project board.
 author: Alexandre Daubois
 branding:
   icon: shield
@@ -40,8 +40,8 @@ inputs:
     description: Image the agent runs in, instead of the tamis agent image pinned by digest and checked against its build attestation. It needs the agent CLI, git, curl and harness-proxy, and is not checked.
     required: false
   project:
-    description: Private organisation project kept in sync with the triaged advisories, as `org/number`. The token needs the organisation "Projects" permission in read and write.
-    required: false
+    description: Required. Private organisation project the triages go on, as `org/number`. The token needs the organisation "Projects" permission in read and write.
+    required: true
   issues-repository:
     description: Private repository the board items are created in as issues, so duplicates become sub-issues of their original report. Drafts when unset. tamis refuses a public repository and the repository of the advisories. The token needs the "Issues" permission in read on it, `issues-token` writes the issues.
     required: false
@@ -52,7 +52,7 @@ inputs:
     description: Close the advisory of an issue a maintainer closed as a duplicate, credit its reporter on the original report and tell them on the closed advisory. Needs `issues-repository`.
     default: "false"
   comment:
-    description: Post the triage as a comment on the advisory, and with `issues-repository` the link to each issue tamis creates. Off by default, every triage then only reaches `project`, which must be set.
+    description: Post on each advisory the link to the issue tamis creates for it in `issues-repository`.
     default: "false"
   references:
     description: Whitespace-separated local git references, including each supported release branch. The first is analysed, and the cited code is located on it. All must have been fetched.

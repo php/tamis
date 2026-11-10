@@ -20,11 +20,8 @@ import (
 	"github.com/php/tamis/internal/repo"
 )
 
-// Marker identifies comments posted by tamis.
+// Marker opens every triage tamis renders.
 const Marker = "<!-- tamis -->"
-
-// FailedMarker identifies the comments of failed attempts, which do not count as a triage.
-const FailedMarker = "<!-- tamis failed -->"
 
 var (
 	cweID = regexp.MustCompile(`^CWE-[1-9][0-9]*$`)
@@ -499,7 +496,7 @@ func abs(n int) int {
 	return max(n, -n)
 }
 
-// Render formats the report as the advisory comment.
+// Render formats the report as the board item shows it.
 func Render(r Report) string {
 	r.Duplicates = slices.DeleteFunc(slices.Clone(r.Duplicates), func(d Duplicate) bool { return !d.visible() })
 	// A CVSS vector of the repository says little about a flaw of the bundled project.
@@ -552,10 +549,10 @@ func RenderPrivate(r Report) string {
 		} else if d.Exact {
 			confidence += " • Proposed exact duplicate"
 		}
-		// No title: the reporter reads this comment, and other advisories may still be under embargo.
+		// No title: other advisories may still be under embargo.
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", advisory, label(d.State), confidence)
 	}
-	b.WriteString("\n_The reporter-visible comment only lists exact duplicates, and unpublished ones after a separate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._\n")
+	b.WriteString("\n_The board item only lists exact duplicates, and unpublished ones after a separate confirmation, without their title. A match covers the shared vulnerability; review any additional findings before closing the report._\n")
 
 	b.WriteString("\n#### Related issues and pull requests\n\n")
 	if len(r.Related) == 0 {
@@ -638,15 +635,6 @@ func (r Report) cited() string {
 	}
 
 	return b.String()
-}
-
-// Failed records a failed attempt, so a hostile report that never completes is not retried indefinitely.
-func Failed(retry bool) string {
-	if retry {
-		return FailedMarker + "\n### Automated triage\n\nThe automated triage could not complete. It will be retried.\n"
-	}
-
-	return FailedMarker + "\n### Automated triage\n\nThe automated triage could not complete. A maintainer must review this report manually.\n"
 }
 
 // scope names the scanned commit, and its branch when it has one.

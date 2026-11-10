@@ -1,6 +1,6 @@
 # Security
 
-tamis reads text from an outside reporter, holds access to embargoed advisories and an API key, and posts a comment the reporter can read. The design assumes a hostile report.
+tamis reads text from an outside reporter, holds access to embargoed advisories and an API key, and writes a triage to a private board. The design assumes a hostile report.
 
 ## Threats
 
@@ -9,18 +9,17 @@ tamis reads text from an outside reporter, holds access to embargoed advisories 
 | A prompt injection makes the agent leak other advisories | See [Duplicate search isolation](#duplicate-search-isolation). |
 | The agent leaks secrets | The container holds no secret. The model key stays on the runner, the GitHub token never enters the container, and the container gets a clean single-branch clone with an empty `.git/config`. |
 | The agent exfiltrates data over the network | The container sits on an isolated internal network and only reaches a private egress sidecar. The model proxy pins the model and rejects remote URLs, remote MCP servers, hosted tools, stored conversations and background calls. |
-| The comment loads a remote image carrying data, or pings people | tamis escapes all model text: no links, images, HTML, entities or mentions. |
-| A reporter posts the marker to block triage | tamis only considers markers in comments from `bot-login`. |
-| A report changes during triage | tamis hashes the title, description, metadata and non-bot comments, reads them again before publication and cancels the post when the revision changed. It does not triage a completed advisory again after a later edit. |
+| The triage loads a remote image carrying data, or pings people | tamis escapes all model text: no links, images, HTML, entities or mentions. |
+| A report changes during triage | tamis hashes the title, description, metadata and non-bot comments, reads them again before publication and publishes nothing when the revision changed. It does not triage a completed advisory again after a later edit. |
 | A reporter drains the model budget | Branches, agents and comparators share the advisory and run budgets. tamis bounds requests, bytes, output tokens and runtime, and one known reporter cannot take a whole run. A provider spending ceiling bounds costs across runs. |
 | Someone replaces a release tag | The action requires a full reviewed commit SHA. tamis also pins agent images by digest and verifies them against their build attestation. |
 | Logs of a public repository expose the report | The action refuses to run from a public repository. See [Logs](#logs). |
 
 ## Duplicate search isolation
 
-The duplicate search is one offline agent that reads the report next to every other advisory, embargoed and closed ones included, so it can search them the way a maintainer would. The private report keeps its complete result, and the comment shows published matches to the reporter.
+The duplicate search is one offline agent that reads the report next to every other advisory, embargoed and closed ones included, so it can search them the way a maintainer would. The private report keeps its complete result, and the board item shows the published matches and the confirmed unpublished ones.
 
-A separate model context confirms each unpublished exact, high-confidence candidate, and holds that candidate only. The host owns the candidate's identifier and publishes it only when this second model returns `exact: true`. A failed search or confirmation keeps unconfirmed unpublished identifiers out of the comment.
+A separate model context confirms each unpublished exact, high-confidence candidate, and holds that candidate only. The host owns the candidate's identifier and publishes it only when this second model returns `exact: true`. A failed search or confirmation keeps unconfirmed unpublished identifiers out of the board item.
 
 A hostile report can still push the confirmations to disclose candidate identifiers. An instruction hidden in one candidate only reaches that candidate's confirmation.
 
@@ -62,9 +61,9 @@ tamis turns off the Codex ChatGPT features that call other routes: plugins, apps
 
 ## Known limits
 
-- The reporter reads the comment. A crafted report can still steer the agent's own text, such as its summary or its policy check.
+- A crafted report can still steer the agent's own text on the board, such as its summary or its policy check.
 - Filtered paths and identifiers remain hostile text and offer no prompt-injection defence. tamis checks their code location before comparison, and the privacy boundary of the output does not rely on the model following instructions.
-- Reading the report again before publication narrows the update race, but GitHub offers no conditional comment creation tied to an advisory revision. tamis does not revisit a completed advisory after a later edit. Each result shows the digest it covers.
+- Reading the report again before publication narrows the update race, but GitHub offers no conditional write tied to an advisory revision. tamis does not revisit a completed advisory after a later edit. Each result shows the digest it covers.
 - Request and byte limits bound one run, not the cost of an endless series of runs. Enforce a provider spending ceiling and a workflow timeout as the [setup guide](setup.md#2-create-a-private-repository) describes.
 - tamis sends the report to the model provider. Check its data retention terms against your disclosure policy.
 - An internal network without a host gateway needs Docker Engine 28 or newer.
