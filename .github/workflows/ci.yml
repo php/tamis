@@ -35,6 +35,30 @@ jobs:
       - run: go tool govulncheck ./...
       - run: go tool gotestsum --format github-actions -- -race -count=1 ./...
 
+  platforms:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Git for Windows converts line endings to CRLF on checkout by default.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go tool gotestsum --format github-actions -- -race -count=1 ./...
+
   # release.yml only runs on tags, so a stale lockfile entry would otherwise break the next release.
   actions-lock:
     runs-on: ubuntu-latest
