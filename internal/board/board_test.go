@@ -1163,8 +1163,8 @@ func TestLinkIssuesCommentsOnTheAdvisoriesOfTheIssuesItCreated(t *testing.T) {
 	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "acme/private-issues", Title: "s", Body: "<!-- tamis-issue GHSA-aaaa-bbbb-cccc -->", State: "open"}
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-aaaa-bbbb-cccc", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-aaaa-bbbb-cccc", Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 	f := &advisories{comments: map[string][]string{}}
 
 	require.NoError(t, b.LinkIssues(t.Context(), f, "php/php-src"))
@@ -1176,7 +1176,7 @@ func TestLinkIssuesReportsAFailedComment(t *testing.T) {
 	p := boardtest.New()
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 
 	require.ErrorContains(t, b.LinkIssues(t.Context(), &advisories{postErr: errors.New("HTTP 502")}, "php/php-src"), "linking the issue of GHSA-new: HTTP 502")
 }
@@ -1185,7 +1185,7 @@ func TestLinkIssuesLeavesDraftsAlone(t *testing.T) {
 	p := boardtest.New()
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 	f := &advisories{comments: map[string][]string{}}
 
 	require.NoError(t, b.LinkIssues(t.Context(), f, "php/php-src"))
