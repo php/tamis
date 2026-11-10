@@ -75,7 +75,7 @@ gh auth refresh -s project
 GH_TOKEN=$(gh auth token) tamis create-board your-org
 ```
 
-The command prints the project as `your-org/NUMBER`. It creates a private project named `tamis` with the fields below and a single `Triage` view of the advisories in `triage` or `draft`, sorted by `Priority` then `Reported`. To lay out a project by hand instead, add these fields:
+The command prints the project as `your-org/NUMBER`. It creates a private project named `tamis` with the fields below and a single `Triage` view of the advisories in `triage` or `draft` that are no duplicate, sorted by `Severity` then `Reported`. To lay out a project by hand instead, add these fields:
 
 | Field | Type | Options, in this order |
 |---|---|---|
@@ -83,7 +83,7 @@ The command prints the project as `your-org/NUMBER`. It creates a private projec
 | `Duplicate of` | Text | |
 | `Duplicates` | Number | |
 | `Reported` | Date | |
-| `Priority` | Single select | `Look first`, `When possible`, `Duplicate`, `Analysis failed`, `Analysis failed, retrying`, `Analysis pending` |
+| `Priority` | Single select | `To triage`, `Duplicate`, `Analysis failed`, `Analysis failed, retrying`, `Analysis pending` |
 | `Severity` | Single select | `Critical`, `High`, `Medium`, `Low` |
 | `State` | Single select | `triage`, `draft`, `published`, `closed`, `withdrawn` |
 | `Policy exclusion` | Single select | `Yes`, `No` |
@@ -97,14 +97,13 @@ Then set `project` to `your-org/NUMBER`. When the project is public, or a field 
 
 The code sets `Priority`:
 
-- `Look first` for a critical, high or medium severity, a faulty statement found in the repository and no policy exclusion,
-- `When possible` otherwise,
+- `To triage` for a report that is no duplicate, which the views order by `Severity`,
 - `Duplicate` behind the oldest high-confidence exact duplicate the comment shows, which `Duplicate of` names,
 - `Analysis pending` while tamis triages again an advisory it commented before the board, `Analysis failed, retrying` after a failed attempt with another to come, and `Analysis failed` once tamis gives up. The draft body then explains the status instead of holding the triage comment.
 
 The model estimates `Severity` from the security policy and its CVSS vector, and ignores the one the reporter claims. A policy or a guidance pack can set it below the vector's rating, as the `php-src` pack does for crashes. `Duplicates` counts the items that name the advisory in `Duplicate of`, or with `issues-repository` the sub-issues its issue gets, the duplicates of its duplicates included. `Component` is the directory of the extension, SAPI or subsystem the model names, such as `sapi/fpm` for FastCGI code a report reaches through FPM, once tamis checks the repository has that directory. Without one, tamis takes the directory of the faulty statement two levels deep, and leaves it empty when the statement was not located. `Upstream` names the project the faulty code is bundled from, such as `lexbor` in php-src, when the fix belongs to that project, and stays empty for the repository's own code. A project created before `Upstream` existed needs that field before upgrading tamis: `gh project field-create NUMBER --owner your-org --name Upstream --data-type TEXT`. `Original report` holds the oldest report of a group of duplicates, on that report and on each of its duplicates, so a view grouped by it shows each original with its duplicates.
 
-At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Severity`, `Policy exclusion`, `Located` and `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to one of those four fields lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft` sorted by `Priority` then `Reported`.
+At the end of each run, tamis copies the state of every advisory to `State`, recounts `Duplicates` and ranks every triage again from `Duplicate of`, so a new priority rule reaches the board with a release. None of it calls the model. A `Priority` changed by hand comes back at the next run, while a change to `Duplicate of` lasts. The REST API cannot archive items, so filter the views on `State` instead, for example a table on `State:triage,draft -Priority:Duplicate` sorted by `Severity` then `Reported`. A board laid out before `To triage` existed needs that option before upgrading tamis, and the next run moves to it the `Look first` and `When possible` items that have `Policy exclusion` and `Located` set. Its `Triage` view still sorts on `Priority`, where those items now tie, so sort it by hand on `Severity` then `Reported` and filter it on `State:triage,draft -Priority:Duplicate`.
 
 An advisory in the `triage` state that tamis commented but that has no item, for example one triaged before the board existed, is triaged again without a new comment. When that triage fails, the item gets `Analysis failed` and the advisory is not retried. Deleting an item by hand triggers that triage again on the next run.
 

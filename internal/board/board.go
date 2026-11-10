@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	LookFirst    = "Look first"
-	WhenPossible = "When possible"
+	ToTriage = "To triage"
 	// AnalysisPending marks an advisory whose analysis started, AnalysisRetrying and AnalysisFailed one whose
 	// analysis failed, with and without another attempt to come. The draft body says more.
 	AnalysisPending  = "Analysis pending"
@@ -53,7 +52,7 @@ var layout = []struct {
 	{fieldDuplicateOf, "text", nil},
 	{fieldDuplicates, "number", nil},
 	{fieldReported, "date", nil},
-	{fieldPriority, "single_select", []string{LookFirst, WhenPossible, Duplicate, AnalysisFailed, AnalysisRetrying, AnalysisPending}},
+	{fieldPriority, "single_select", []string{ToTriage, Duplicate, AnalysisFailed, AnalysisRetrying, AnalysisPending}},
 	{fieldSeverity, "single_select", []string{"Critical", "High", "Medium", "Low"}},
 	{fieldState, "single_select", []string{"triage", "draft", "published", "closed", "withdrawn"}},
 	{fieldExcluded, "single_select", []string{"Yes", "No"}},
@@ -81,8 +80,8 @@ type Creator interface {
 	DeleteProjectView(ctx context.Context, view string) error
 }
 
-// Create makes a project of org laid out as Open expects, with one view of the advisories still in triage sorted
-// by priority, and returns it as "org/number".
+// Create makes a project of org laid out as Open expects, with one view of the advisories still in triage that
+// are no duplicate, sorted by severity, and returns it as "org/number".
 func Create(ctx context.Context, gh Creator, org, title string) (string, error) {
 	number, view, err := gh.CreateProject(ctx, org, title)
 	if err != nil {
@@ -104,9 +103,9 @@ func Create(ctx context.Context, gh Creator, org, title string) (string, error) 
 	}
 	triage := github.ProjectView{
 		Name:   "Triage",
-		Filter: "State:triage,draft",
+		Filter: "State:triage,draft -Priority:Duplicate",
 		Fields: []int64{ids["Title"], ids[fieldPriority], ids[fieldSeverity], ids[fieldComponent], ids[fieldUpstream], ids[fieldDuplicates], ids[fieldReported]},
-		SortBy: []int64{ids[fieldPriority], ids[fieldReported]},
+		SortBy: []int64{ids[fieldSeverity], ids[fieldReported]},
 	}
 	if err := gh.CreateProjectView(ctx, org, number, triage); err != nil {
 		return "", fmt.Errorf("creating the view of %s: %w", project, err)
@@ -259,12 +258,12 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 		}
 	}
 
-	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup], b.ids[fieldAttempts], b.ids[fieldReported]})
+	items, err := gh.ListProjectItems(ctx, org, number, []int64{b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldDuplicates], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup], b.ids[fieldAttempts], b.ids[fieldReported]})
 	if err != nil {
 		return nil, err
 	}
 	for _, it := range items {
-		var ghsa, severity, excluded, located string
+		var ghsa, excluded, located string
 		entry := &item{id: it.ID, draft: it.Content.NodeID}
 		// The issue number only names an issue of the issues repository, the one ig writes.
 		if it.ContentType == "Issue" && issues != "" && strings.EqualFold(it.Content.Repository, issues) {
@@ -280,7 +279,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 			var count float64
 			var err error
 			switch f.ID {
-			case b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldSeverity], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup]:
+			case b.ids[fieldGHSA], b.ids[fieldDuplicateOf], b.ids[fieldState], b.ids[fieldPriority], b.ids[fieldExcluded], b.ids[fieldLocated], b.ids[fieldGroup]:
 				err = json.Unmarshal(f.Value, &text)
 			case b.ids[fieldDuplicates], b.ids[fieldAttempts]:
 				err = json.Unmarshal(f.Value, &count)
@@ -304,8 +303,6 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 				entry.attempts = int(count)
 			case b.ids[fieldPriority]:
 				entry.priority = text.Name.Raw
-			case b.ids[fieldSeverity]:
-				severity = strings.ToLower(text.Name.Raw)
 			case b.ids[fieldExcluded]:
 				excluded = text.Name.Raw
 			case b.ids[fieldLocated]:
@@ -319,7 +316,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 			ghsa = markedAdvisory(it.Content.Body)
 		}
 		if excluded != "" && located != "" {
-			entry.triage = &Triage{Severity: severity, DuplicateOf: entry.duplicateOf, Excluded: excluded == "Yes", Located: located == "Yes"}
+			entry.triage = &Triage{DuplicateOf: entry.duplicateOf, Excluded: excluded == "Yes", Located: located == "Yes"}
 		}
 		if ghsa != "" {
 			entry.ghsa = ghsa
@@ -381,18 +378,13 @@ func TriageOf(r report.Report) Triage {
 	return t
 }
 
-// Priority ranks a triage. A report goes behind its oldest duplicate, the others are looked at first only when
-// severe, with the faulty statement located and no policy exclusion. Reports cite their own proof-of-concept
-// files, so a cited file missing from the repository says nothing.
+// Priority sets a report apart when it goes behind its oldest duplicate. The views order the others by severity.
 func (t Triage) Priority() string {
-	switch {
-	case t.DuplicateOf != "":
+	if t.DuplicateOf != "" {
 		return Duplicate
-	case t.Severity != "critical" && t.Severity != "high" && t.Severity != "medium" || t.Excluded || !t.Located:
-		return WhenPossible
-	default:
-		return LookFirst
 	}
+
+	return ToTriage
 }
 
 // Put creates the item of a, or updates the one it has. A nil t sets priority as a status and clears the

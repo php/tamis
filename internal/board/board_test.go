@@ -28,7 +28,7 @@ func TestOpenRequiresTheDocumentedFields(t *testing.T) {
 		"no org":         {"/16", func(*boardtest.Project) {}, `the project must be given as "org/number"`},
 		"missing field":  {"php/16", func(p *boardtest.Project) { p.Fields[1].Name = "Advisory" }, `the project has no text field "GHSA"`},
 		"wrong type":     {"php/16", func(p *boardtest.Project) { p.Fields[3].DataType = "text" }, `the project has no number field "Duplicates"`},
-		"missing option": {"php/16", func(p *boardtest.Project) { p.Fields[5].Options = p.Fields[5].Options[1:] }, `the "Priority" field has no "Look first" option`},
+		"missing option": {"php/16", func(p *boardtest.Project) { p.Fields[5].Options = p.Fields[5].Options[1:] }, `the "Priority" field has no "To triage" option`},
 		"public":         {"php/16", func(p *boardtest.Project) { p.Public = true }, "the project must be private"},
 		"unread GHSA":    {"php/16", func(p *boardtest.Project) { p.Add(map[string]any{"GHSA": 5}) }, "the project item 1 has a value in an unexpected format"},
 		"unread count":   {"php/16", func(p *boardtest.Project) { p.Add(map[string]any{"GHSA": "GHSA-old", "Duplicates": "two"}) }, "the project item 1 has a value in an unexpected format"},
@@ -53,15 +53,10 @@ func TestTriageOf(t *testing.T) {
 		priority    string
 		duplicateOf string
 	}{
-		"severe":           {report.Report{Severity: "high", Located: true}, LookFirst, ""},
-		"critical":         {report.Report{Severity: "critical", Located: true}, LookFirst, ""},
-		"proof of concept": {report.Report{Severity: "high", Located: true, CodeReferences: []report.CodeReference{{Found: true}, {Path: "trigger.py"}}}, LookFirst, ""},
-		"medium":           {report.Report{Severity: "medium", Located: true}, LookFirst, ""},
-		"low":              {report.Report{Severity: "low", Located: true}, WhenPossible, ""},
-		"excluded medium":  {report.Report{Severity: "medium", Located: true, PolicyExclusions: []report.PolicyPoint{{Point: "p"}}}, WhenPossible, ""},
-		"no severity":      {report.Report{Located: true}, WhenPossible, ""},
-		"not located":      {report.Report{Severity: "high", CodeReferences: []report.CodeReference{{Found: true}}}, WhenPossible, ""},
-		"policy exclusion": {report.Report{Severity: "critical", Located: true, PolicyExclusions: []report.PolicyPoint{{Point: "p"}}}, WhenPossible, ""},
+		"severe":           {report.Report{Severity: "high", Located: true}, ToTriage, ""},
+		"low":              {report.Report{Severity: "low", Located: true}, ToTriage, ""},
+		"not located":      {report.Report{Severity: "high", CodeReferences: []report.CodeReference{{Found: true}}}, ToTriage, ""},
+		"policy exclusion": {report.Report{Severity: "critical", Located: true, PolicyExclusions: []report.PolicyPoint{{Point: "p"}}}, ToTriage, ""},
 		"open duplicate":   {report.Report{Severity: "critical", Duplicates: []report.Duplicate{older}}, Duplicate, "GHSA-old"},
 		"settled duplicate": {report.Report{Duplicates: []report.Duplicate{func() report.Duplicate {
 			d := older
@@ -77,10 +72,10 @@ func TestTriageOf(t *testing.T) {
 			}(),
 			older,
 		}}, Duplicate, "GHSA-old"},
-		"newer duplicate":     {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.CreatedAt = reported.Add(time.Hour); return d }()}}, LookFirst, ""},
-		"unconfirmed":         {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.Confirmed = false; return d }()}}, LookFirst, ""},
-		"not exact":           {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.Exact = false; return d }()}}, LookFirst, ""},
-		"not high confidence": {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.Confidence = "medium"; return d }()}}, LookFirst, ""},
+		"newer duplicate":     {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.CreatedAt = reported.Add(time.Hour); return d }()}}, ToTriage, ""},
+		"unconfirmed":         {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.Confirmed = false; return d }()}}, ToTriage, ""},
+		"not exact":           {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.Exact = false; return d }()}}, ToTriage, ""},
+		"not high confidence": {report.Report{Severity: "high", Located: true, Duplicates: []report.Duplicate{func() report.Duplicate { d := older; d.Confidence = "medium"; return d }()}}, ToTriage, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tc.r.CreatedAt = reported
@@ -89,6 +84,8 @@ func TestTriageOf(t *testing.T) {
 			require.Equal(t, tc.duplicateOf, triage.DuplicateOf)
 		})
 	}
+	require.True(t, TriageOf(report.Report{PolicyExclusions: []report.PolicyPoint{{Point: "p"}}}).Excluded, "a policy exclusion was dropped")
+	require.False(t, TriageOf(report.Report{}).Excluded)
 }
 
 func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
@@ -98,26 +95,26 @@ func TestPutCreatesOneItemPerAdvisory(t *testing.T) {
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow in foo", HTMLURL: "https://x/GHSA-new", State: "triage", CreatedAt: reported}
 
 	require.NoError(t, b.Put(t.Context(), a, Duplicate, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Excluded: true}, "first comment"))
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "critical", Located: true, Component: "ext/foo", Upstream: "lexbor"}, "second comment"))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{Severity: "critical", Located: true, Component: "ext/foo", Upstream: "lexbor"}, "second comment"))
 
 	require.Len(t, p.Items, 1, "a second put created another item")
 	id := p.Find("GHSA-new")
 	require.Equal(t, "Overflow in foo", p.Titles[id])
 	require.Equal(t, "https://x/GHSA-new\n\nsecond comment", p.Bodies[id], "the draft body misses the latest comment")
-	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": LookFirst, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Upstream": "lexbor", "Original report": ""}, values(p, id))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-new", "Reported": "2026-10-20", "State": "triage", "Priority": ToTriage, "Severity": "Critical", "Duplicate of": "", "Duplicates": "", "Policy exclusion": "No", "Located": "Yes", "Component": "ext/foo", "Upstream": "lexbor", "Original report": ""}, values(p, id))
 }
 
 func TestPutFindsTheItemOfAPreviousRun(t *testing.T) {
 	p := boardtest.New()
-	id := p.Add(map[string]any{"GHSA": "GHSA-new", "Priority": WhenPossible})
-	p.Add(map[string]any{"Priority": WhenPossible})
+	id := p.Add(map[string]any{"GHSA": "GHSA-new", "Priority": ToTriage})
+	p.Add(map[string]any{"Priority": ToTriage})
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "ghsa-NEW", State: "draft"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "ghsa-NEW", State: "draft"}, ToTriage, &Triage{}, ""))
 
 	require.Len(t, p.Items, 2, "the item of a previous run was not reused")
-	require.Equal(t, LookFirst, p.Value(id, "Priority"))
+	require.Equal(t, ToTriage, p.Value(id, "Priority"))
 	require.Equal(t, "draft", p.Value(id, "State"))
 	require.Empty(t, p.Value(id, "Severity"), "an unknown severity was not cleared")
 }
@@ -128,27 +125,27 @@ func TestPutReportsAFailedWrite(t *testing.T) {
 	require.NoError(t, err)
 	p.Err = errors.New("HTTP 403")
 
-	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new"}, LookFirst, &Triage{Severity: "high"}, ""))
+	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new"}, ToTriage, &Triage{Severity: "high"}, ""))
 	require.Empty(t, p.Items)
 }
 
 func TestSyncMirrorsStatesAndDuplicates(t *testing.T) {
 	p := boardtest.New()
-	old := p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Priority": LookFirst})
+	old := p.Add(map[string]any{"GHSA": "GHSA-old", "State": "triage", "Priority": ToTriage})
 	dup := p.Add(map[string]any{"GHSA": "GHSA-dup", "State": "triage", "Priority": Duplicate, "Duplicate of": "GHSA-old"})
 	other := p.Add(map[string]any{"GHSA": "GHSA-other", "State": "triage", "Priority": Duplicate, "Duplicate of": "GHSA-old"})
-	gone := p.Add(map[string]any{"GHSA": "GHSA-gone", "State": "triage", "Priority": WhenPossible})
-	manual := p.Add(map[string]any{"Priority": WhenPossible})
+	gone := p.Add(map[string]any{"GHSA": "GHSA-gone", "State": "triage", "Priority": ToTriage})
+	manual := p.Add(map[string]any{"Priority": ToTriage})
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
 
-	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": LookFirst, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Upstream": "", "Original report": "GHSA-old"}, values(p, old))
+	require.Equal(t, map[string]string{"GHSA": "GHSA-old", "State": "published", "Priority": ToTriage, "Duplicates": "2", "Reported": "", "Severity": "", "Duplicate of": "", "Policy exclusion": "", "Located": "", "Component": "", "Upstream": "", "Original report": "GHSA-old"}, values(p, old))
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"), "the duplicate of a settled report changed priority")
 	require.Equal(t, "closed", p.Value(other, "State"))
 	require.Equal(t, "triage", p.Value(gone, "State"), "an advisory missing from the list changed state")
-	require.Equal(t, WhenPossible, p.Value(manual, "Priority"), "an item added by hand was touched")
+	require.Equal(t, ToTriage, p.Value(manual, "Priority"), "an item added by hand was touched")
 
 	writes := p.Writes
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-old", State: "published"}, {GHSAID: "GHSA-dup", State: "triage"}, {GHSAID: "GHSA-other", State: "closed"}}))
@@ -176,7 +173,7 @@ func values(p *boardtest.Project, id int64) map[string]string {
 
 func TestHas(t *testing.T) {
 	p := boardtest.New()
-	p.Add(map[string]any{"GHSA": "GHSA-old", "Priority": "Look first"})
+	p.Add(map[string]any{"GHSA": "GHSA-old", "Priority": "To triage"})
 	p.Add(map[string]any{"GHSA": "GHSA-bare"})
 	p.Add(map[string]any{"GHSA": "GHSA-a", "Priority": "Analysis failed, retrying"})
 	p.Add(map[string]any{"GHSA": "GHSA-b", "Priority": "Analysis failed"})
@@ -206,9 +203,9 @@ func TestPutReusesTheDraftWhoseFieldsFailed(t *testing.T) {
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}
 	p.UpdateErr = errors.New("HTTP 502")
 
-	require.Error(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high"}, ""))
+	require.Error(t, b.Put(t.Context(), a, ToTriage, &Triage{Severity: "high"}, ""))
 	p.UpdateErr = nil
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high"}, ""))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{Severity: "high"}, ""))
 
 	require.Len(t, p.Items, 1, "a failed field update left a second draft")
 }
@@ -246,7 +243,7 @@ func TestPutKeepsTheDraftBodyWithoutAComment(t *testing.T) {
 	require.NoError(t, b.Put(t.Context(), a, AnalysisPending, nil, ""))
 	id := p.Find("GHSA-new")
 	require.Equal(t, "https://x/GHSA-new", p.Bodies[id])
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high"}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{Severity: "high"}, "the comment"))
 	require.NoError(t, b.Put(t.Context(), a, AnalysisFailed, nil, ""))
 
 	require.Equal(t, "https://x/GHSA-new\n\nthe comment", p.Bodies[id], "a put without comment erased the body")
@@ -259,7 +256,7 @@ func TestPutUpdatesTheDraftOfAPreviousRun(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", HTMLURL: "https://x/GHSA-new"}, LookFirst, &Triage{Severity: "high"}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", HTMLURL: "https://x/GHSA-new"}, ToTriage, &Triage{Severity: "high"}, "the comment"))
 
 	require.Equal(t, "https://x/GHSA-new\n\nthe comment", p.Bodies[id])
 }
@@ -271,7 +268,7 @@ func TestPutReportsAFailedDraftUpdate(t *testing.T) {
 	require.NoError(t, err)
 	p.Err = errors.New("github: GraphQL request failed")
 
-	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new"}, LookFirst, &Triage{Severity: "high"}, "the comment"))
+	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new"}, ToTriage, &Triage{Severity: "high"}, "the comment"))
 }
 
 func TestPutClearsTheTriageOfAStatus(t *testing.T) {
@@ -280,7 +277,7 @@ func TestPutClearsTheTriageOfAStatus(t *testing.T) {
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-new", State: "triage"}
 
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Located: true, Component: "ext/foo", Upstream: "lexbor"}, ""))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{Severity: "high", DuplicateOf: "GHSA-old", Located: true, Component: "ext/foo", Upstream: "lexbor"}, ""))
 	require.NoError(t, b.Put(t.Context(), a, AnalysisFailed, nil, "note"))
 
 	id := p.Find("GHSA-new")
@@ -289,23 +286,39 @@ func TestPutClearsTheTriageOfAStatus(t *testing.T) {
 	}
 }
 
-func TestSyncRanksEveryTriageAgain(t *testing.T) {
+func TestSyncMovesAPriorityOfAnOlderLayout(t *testing.T) {
 	p := boardtest.New()
-	stale := p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Priority": WhenPossible, "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
-	dup := p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Priority": LookFirst, "Severity": "High", "Policy exclusion": "No", "Located": "Yes", "Duplicate of": "GHSA-a"})
-	excluded := p.Add(map[string]any{"GHSA": "GHSA-c", "State": "triage", "Priority": LookFirst, "Severity": "High", "Policy exclusion": "Yes", "Located": "Yes"})
-	status := p.Add(map[string]any{"GHSA": "GHSA-d", "State": "triage", "Priority": AnalysisFailed})
-	older := p.Add(map[string]any{"GHSA": "GHSA-e", "State": "triage", "Priority": LookFirst, "Severity": "Low"})
+	old := p.Fields[5].Options[0]
+	old.ID, old.Name.Raw = "opt-Look first", "Look first"
+	p.Fields[5].Options = append(p.Fields[5].Options, old)
+	ranked := p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Priority": "Look first", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+	unranked := p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Priority": "Look first"})
 	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Sync(t.Context(), nil))
 
-	require.Equal(t, LookFirst, p.Value(stale, "Priority"), "a triage ranked by an older rule kept its priority")
+	require.Equal(t, ToTriage, p.Value(ranked, "Priority"))
+	require.Equal(t, "Look first", p.Value(unranked, "Priority"), "an item without a triage was ranked")
+}
+
+func TestSyncRanksEveryTriageAgain(t *testing.T) {
+	p := boardtest.New()
+	stale := p.Add(map[string]any{"GHSA": "GHSA-a", "State": "triage", "Priority": Duplicate, "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+	dup := p.Add(map[string]any{"GHSA": "GHSA-b", "State": "triage", "Priority": ToTriage, "Severity": "High", "Policy exclusion": "No", "Located": "Yes", "Duplicate of": "GHSA-a"})
+	excluded := p.Add(map[string]any{"GHSA": "GHSA-c", "State": "triage", "Priority": Duplicate, "Severity": "Low", "Policy exclusion": "Yes", "Located": "No"})
+	status := p.Add(map[string]any{"GHSA": "GHSA-d", "State": "triage", "Priority": AnalysisFailed})
+	older := p.Add(map[string]any{"GHSA": "GHSA-e", "State": "triage", "Priority": Duplicate, "Severity": "Low"})
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
+	require.NoError(t, err)
+
+	require.NoError(t, b.Sync(t.Context(), nil))
+
+	require.Equal(t, ToTriage, p.Value(stale, "Priority"), "a triage ranked by an older rule kept its priority")
 	require.Equal(t, Duplicate, p.Value(dup, "Priority"))
-	require.Equal(t, WhenPossible, p.Value(excluded, "Priority"))
+	require.Equal(t, ToTriage, p.Value(excluded, "Priority"), "severity, exclusion or location split the reports")
 	require.Equal(t, AnalysisFailed, p.Value(status, "Priority"), "a status was ranked as a triage")
-	require.Equal(t, LookFirst, p.Value(older, "Priority"), "an item without the ranking inputs was ranked")
+	require.Equal(t, Duplicate, p.Value(older, "Priority"), "an item without a triage was ranked")
 
 	writes := p.Writes
 	require.NoError(t, b.Sync(t.Context(), nil))
@@ -385,7 +398,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 	a := github.Advisory{GHSAID: "GHSA-new", Summary: "Overflow found by @someone", HTMLURL: "https://x/GHSA-new", State: "triage"}
 
 	require.NoError(t, b.Put(t.Context(), a, AnalysisPending, nil, "pending"))
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{Severity: "high", Located: true}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{Severity: "high", Located: true}, "the comment"))
 
 	id := p.Find("GHSA-new")
 	issue := p.IssueOf(id)
@@ -396,7 +409,7 @@ func TestPutCreatesAPrivateIssue(t *testing.T) {
 	require.Equal(t, "https://x/GHSA-new\n\nthe comment\n\n<!-- tamis-issue GHSA-new -->", issue.Body)
 	require.Equal(t, "open", issue.State)
 	require.Empty(t, p.Titles, "a draft was created next to the issue")
-	require.Equal(t, LookFirst, p.Value(id, "Priority"))
+	require.Equal(t, ToTriage, p.Value(id, "Priority"))
 }
 
 func TestPutClosesTheIssueOfASettledAdvisory(t *testing.T) {
@@ -404,7 +417,7 @@ func TestPutClosesTheIssueOfASettledAdvisory(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "published"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "published"}, ToTriage, &Triage{}, ""))
 
 	issue := p.IssueOf(p.Find("GHSA-new"))
 	require.Equal(t, "closed", issue.State)
@@ -417,7 +430,7 @@ func TestPutReportsAFailedIssue(t *testing.T) {
 	require.NoError(t, err)
 	p.IssueErr = errors.New("HTTP 403")
 
-	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 	require.Empty(t, p.Items, "an item was added without its issue")
 }
 
@@ -427,7 +440,7 @@ func TestPutKeepsTheDraftsOfAPreviousRun(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", HTMLURL: "https://x/GHSA-old", State: "triage"}, LookFirst, &Triage{}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", HTMLURL: "https://x/GHSA-old", State: "triage"}, ToTriage, &Triage{}, "the comment"))
 
 	require.Nil(t, p.IssueOf(id))
 	require.Empty(t, p.Issues, "a draft was turned into a second item")
@@ -439,7 +452,7 @@ func TestSyncMirrorsTheAdvisoryStateOnItsIssue(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	for _, g := range []string{"GHSA-a", "GHSA-b", "GHSA-c"} {
-		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, LookFirst, &Triage{}, ""))
+		require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: g, Summary: g, State: "triage"}, ToTriage, &Triage{}, ""))
 	}
 
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{{GHSAID: "GHSA-a", State: "published"}, {GHSAID: "GHSA-b", State: "closed"}, {GHSAID: "GHSA-c", State: "draft"}}))
@@ -491,7 +504,7 @@ func TestPutAttachesTheIssueOfARunThatFailedToAddIt(t *testing.T) {
 
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{}, "the comment"))
 
 	require.Len(t, p.Issues, 2, "a second issue was created for the same advisory")
 	issue := p.IssueOf(p.Find(ghsa))
@@ -509,7 +522,7 @@ func TestPutMarksEveryIssueWithItsAdvisory(t *testing.T) {
 
 	require.NoError(t, b.Put(t.Context(), a, AnalysisPending, nil, "pending"))
 	require.Contains(t, p.IssueOf(p.Find(ghsa)).Body, "<!-- tamis-issue "+ghsa+" -->")
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{}, "the comment"))
 	require.Contains(t, p.IssueOf(p.Find(ghsa)).Body, "<!-- tamis-issue "+ghsa+" -->", "the update dropped the marker")
 }
 
@@ -552,13 +565,13 @@ func TestOpenFindsTheIssueOfARunWhoseFieldsFailed(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	p.UpdateErr = errors.New("HTTP 404")
-	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.Error(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 	p.UpdateErr = nil
 
 	b, err = Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.False(t, b.Has(ghsa), "an item without fields looks triaged")
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: "triage"}, ToTriage, &Triage{}, ""))
 
 	require.Len(t, p.Items, 1, "the issue was added to the project twice")
 	require.Len(t, p.Issues, 1)
@@ -569,7 +582,7 @@ func TestSyncLeavesTheIssuesOfAnotherRepositoryAlone(t *testing.T) {
 	p := boardtest.New()
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-a", Summary: "a", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-a", Summary: "a", State: "triage"}, ToTriage, &Triage{}, ""))
 	id := p.Find("GHSA-a")
 
 	b, err = Open(t.Context(), p, nil, "php/16", "", "php/php-src")
@@ -597,7 +610,7 @@ func TestPutIgnoresAMarkerQuotedByTheTriage(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	require.NotNil(t, b.items[strings.ToLower(own)], "the issue lost its own advisory")
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: quoted, Summary: quoted, State: "triage"}, LookFirst, &Triage{}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: quoted, Summary: quoted, State: "triage"}, ToTriage, &Triage{}, "the comment"))
 
 	require.Len(t, p.Issues, 2, "the quoted advisory took over the issue of another")
 	require.Equal(t, body, p.Issues[1].Body)
@@ -615,10 +628,10 @@ func TestPutReopensTheIssueOfAnAdvisoryBackInTriage(t *testing.T) {
 	reopened := github.Advisory{GHSAID: "GHSA-a", State: "triage"}
 
 	p.IssueErr = errors.New("HTTP 502")
-	require.Error(t, b.Put(t.Context(), reopened, LookFirst, &Triage{}, ""))
+	require.Error(t, b.Put(t.Context(), reopened, ToTriage, &Triage{}, ""))
 	require.Equal(t, "closed", p.Value(id, "State"), "the field moved while its issue stayed closed")
 	p.IssueErr = nil
-	require.NoError(t, b.Put(t.Context(), reopened, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), reopened, ToTriage, &Triage{}, ""))
 	require.NoError(t, b.Sync(t.Context(), []github.Advisory{reopened}))
 
 	require.Equal(t, "open", p.IssueOf(id).State, "the issue stayed closed while its advisory is in triage")
@@ -630,7 +643,7 @@ func TestPutWritesTheFieldsOfAnIssueOfAnotherRepository(t *testing.T) {
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
 	a := github.Advisory{GHSAID: "GHSA-a", Summary: "a", HTMLURL: "https://x/GHSA-a", State: "triage"}
-	require.NoError(t, b.Put(t.Context(), a, LookFirst, &Triage{}, "the comment"))
+	require.NoError(t, b.Put(t.Context(), a, ToTriage, &Triage{}, "the comment"))
 	id := p.Find("GHSA-a")
 
 	b, err = Open(t.Context(), p, nil, "php/16", "", "php/php-src")
@@ -654,7 +667,7 @@ func TestSyncNestsADuplicateUnderAnOriginalAddedLater(t *testing.T) {
 	require.Equal(t, "GHSA-old", p.Value(p.Find("GHSA-dup"), "Original report"))
 
 	b = open()
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", Summary: "o", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-old", Summary: "o", State: "triage"}, ToTriage, &Triage{}, ""))
 	require.NoError(t, b.Sync(t.Context(), nil))
 	original := p.IssueOf(p.Find("GHSA-old"))
 	require.Equal(t, int(original.ID-1000), p.IssueOf(p.Find("GHSA-dup")).Parent, "the duplicate stayed out of its original")
@@ -672,7 +685,7 @@ func TestPutReopensAClosedIssueItAttachesAgain(t *testing.T) {
 			b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 			require.NoError(t, err)
 
-			require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: state}, LookFirst, &Triage{}, "the comment"))
+			require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: ghsa, Summary: "s", State: state}, ToTriage, &Triage{}, "the comment"))
 
 			require.Len(t, p.Issues, 1, "a second issue was created")
 			require.Equal(t, want, p.Issues[1].State)
@@ -703,7 +716,7 @@ func TestSyncTakesOutAReportThatIsNoLongerADuplicate(t *testing.T) {
 	p := boardtest.New()
 	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-root", Summary: "r", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-root", Summary: "r", State: "triage"}, ToTriage, &Triage{}, ""))
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "d", State: "triage"}, Duplicate, &Triage{DuplicateOf: "GHSA-root"}, ""))
 	require.NoError(t, b.Sync(t.Context(), nil))
 	dup := p.IssueOf(p.Find("GHSA-dup"))
@@ -830,9 +843,9 @@ func TestCreateLaysOutTheProjectOpenExpects(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []github.ProjectView{{
 		Name:   "Triage",
-		Filter: "State:triage,draft",
+		Filter: "State:triage,draft -Priority:Duplicate",
 		Fields: []int64{100, 105, 106, 110, 111, 103, 104},
-		SortBy: []int64{105, 104},
+		SortBy: []int64{106, 104},
 	}}, p.Views)
 	require.Equal(t, []string{"PVTV_default"}, p.Deleted)
 }
@@ -925,7 +938,7 @@ func closedAsDuplicate(t *testing.T, reason string, duplicateOf string) (*boardt
 	p := boardtest.New()
 	b, err := Open(t.Context(), p, p, "acme/16", "acme/private-issues", "php/php-src")
 	require.NoError(t, err)
-	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-orig", Summary: "s", State: "triage", CreatedAt: reported}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-orig", Summary: "s", State: "triage", CreatedAt: reported}, ToTriage, &Triage{}, ""))
 	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-dup", Summary: "s", State: "triage", CreatedAt: reported.AddDate(0, 0, 1)}, Duplicate, &Triage{DuplicateOf: duplicateOf}, ""))
 	issue := p.IssueOf(p.Find("GHSA-dup"))
 	issue.State, issue.StateReason = "closed", reason

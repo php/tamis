@@ -1418,7 +1418,7 @@ func TestRunPutsTheLastFailedAttemptOnTheBoard(t *testing.T) {
 
 func TestRunSyncsTheBoardWithoutTriaging(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": "When possible"})
+	id := gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "triage", "Priority": "To triage"})
 	gh.advisories[2].State = "closed"
 
 	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng))
@@ -1445,12 +1445,12 @@ func TestRunDoesNotTriageAgainWithABoardInAnUnexpectedLayout(t *testing.T) {
 	require.Empty(t, eng.calls, "an unreadable board looked empty and caused another triage")
 }
 
-func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing.T) {
+func TestRunLocatesTheFaultyStatementOfAReport(t *testing.T) {
 	for name, tc := range map[string]struct {
-		location, priority, located, component string
+		location, located, component string
 	}{
-		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Look first", "Yes", "ext/foo"},
-		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "When possible", "No", ""},
+		"located":     {`"path":"ext/foo/foo.c","symbol":"php_foo","line":42`, "Yes", "ext/foo"},
+		"not located": {`"path":"ext/foo/missing.c","symbol":"php_foo","line":42`, "No", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := newFixture()
@@ -1459,8 +1459,9 @@ func TestRunLooksFirstAtASevereReportOnlyWhenItsFaultyStatementExists(t *testing
 			require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "php/16"}, gh, eng))
 
 			id := gh.Find("GHSA-new")
-			require.Equal(t, tc.priority, gh.Value(id, "Priority"))
-			require.Equal(t, tc.located, gh.Value(id, "Located"), "the board cannot rank this triage again")
+			require.Equal(t, "To triage", gh.Value(id, "Priority"))
+			require.Equal(t, "High", gh.Value(id, "Severity"), "the views lost the severity they sort on")
+			require.Equal(t, tc.located, gh.Value(id, "Located"))
 			require.Equal(t, "No", gh.Value(id, "Policy exclusion"))
 			require.Equal(t, tc.component, gh.Value(id, "Component"))
 		})
@@ -1488,7 +1489,7 @@ func TestRunPutsTheUpstreamProjectOnTheBoard(t *testing.T) {
 
 func TestRunFailsWhenTheBoardSyncFails(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "draft", "Priority": "When possible"})
+	gh.Add(map[string]any{"GHSA": "GHSA-done", "State": "draft", "Priority": "To triage"})
 	gh.UpdateErr = errors.New("HTTP 502")
 
 	err := run(t, Config{Advisory: "GHSA-done", Project: "php/16"}, gh, eng)
@@ -1716,7 +1717,7 @@ func TestRunWithoutCommentsRetriesAnAnalysisAStoppedRunLeftPending(t *testing.T)
 
 func TestRunForcedTriagesAgainAnAdvisoryItsItemHoldsATriageFor(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{}
-	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Look first", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "To triage", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
 
 	require.NoError(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16", NoComment: true, Force: true}, gh, eng))
 
@@ -1727,12 +1728,12 @@ func TestRunForcedTriagesAgainAnAdvisoryItsItemHoldsATriageFor(t *testing.T) {
 
 func TestRunForcedKeepsTheTriageAnItemHoldsWhenTheNewOneFails(t *testing.T) {
 	gh, eng := newFixture(), &fakeEngine{fail: "GHSA-new"}
-	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "Look first", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
+	id := gh.Add(map[string]any{"GHSA": "GHSA-new", "State": "triage", "Priority": "To triage", "Severity": "Critical", "Policy exclusion": "No", "Located": "Yes"})
 
 	require.Error(t, run(t, Config{Advisory: "GHSA-new", Project: "acme/16", NoComment: true, Force: true}, gh, eng))
 
 	require.NotEmpty(t, eng.role(""))
-	require.Equal(t, "Look first", gh.Value(id, "Priority"), "a failed forced triage erased the previous one")
+	require.Equal(t, "To triage", gh.Value(id, "Priority"), "a failed forced triage erased the previous one")
 	require.Equal(t, "Critical", gh.Value(id, "Severity"))
 }
 
