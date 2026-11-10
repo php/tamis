@@ -1157,3 +1157,38 @@ func TestSyncKeepsTheIssueOfAClosedDuplicateClosedAsSuch(t *testing.T) {
 	require.Equal(t, "closed", p.Value(p.Find("GHSA-dup"), "State"))
 	require.Equal(t, "not_planned", p.IssueOf(p.Find("GHSA-orig")).StateReason)
 }
+
+func TestLinkIssuesCommentsOnTheAdvisoriesOfTheIssuesItCreated(t *testing.T) {
+	p := boardtest.New()
+	p.Issues[1] = &boardtest.Issue{ID: 1001, Repo: "acme/private-issues", Title: "s", Body: "<!-- tamis-issue GHSA-aaaa-bbbb-cccc -->", State: "open"}
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-aaaa-bbbb-cccc", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	f := &advisories{comments: map[string][]string{}}
+
+	require.NoError(t, b.LinkIssues(t.Context(), f, "php/php-src"))
+
+	require.Equal(t, map[string][]string{"GHSA-new": {"Tracked in https://github.com/acme/private-issues/issues/2."}}, f.comments, "an issue found again from a failed run was linked")
+}
+
+func TestLinkIssuesReportsAFailedComment(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "acme/private-issues", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+
+	require.ErrorContains(t, b.LinkIssues(t.Context(), &advisories{postErr: errors.New("HTTP 502")}, "php/php-src"), "linking the issue of GHSA-new: HTTP 502")
+}
+
+func TestLinkIssuesLeavesDraftsAlone(t *testing.T) {
+	p := boardtest.New()
+	b, err := Open(t.Context(), p, p, "php/16", "", "php/php-src")
+	require.NoError(t, err)
+	require.NoError(t, b.Put(t.Context(), github.Advisory{GHSAID: "GHSA-new", Summary: "s", State: "triage"}, LookFirst, &Triage{}, ""))
+	f := &advisories{comments: map[string][]string{}}
+
+	require.NoError(t, b.LinkIssues(t.Context(), f, "php/php-src"))
+
+	require.Empty(t, f.comments)
+}

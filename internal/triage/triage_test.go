@@ -1558,7 +1558,16 @@ func TestRunPutsTheTriageInAPrivateIssue(t *testing.T) {
 	require.NotNil(t, issue, "the board triage is not an issue")
 	require.Equal(t, "acme/private-issues", issue.Repo)
 	require.Contains(t, issue.Body, report.Marker, "the issue misses the triage")
-	require.Empty(t, gh.posted, "the board triage posted a comment")
+	require.Equal(t, map[string]string{"GHSA-done": "Tracked in https://github.com/acme/private-issues/issues/1."}, gh.posted, "the advisory misses the link to its issue, or got the triage")
+}
+
+func TestRunLinksNoIssueWithoutComments(t *testing.T) {
+	gh, eng := newFixture(), &fakeEngine{}
+
+	require.NoError(t, run(t, Config{Advisory: "GHSA-done", Project: "php/16", IssuesRepository: "acme/private-issues", NoComment: true}, gh, eng))
+
+	require.NotNil(t, gh.IssueOf(gh.Find("GHSA-done")))
+	require.Empty(t, gh.posted)
 }
 
 func TestRunClosesTheReportOfAnIssueClosedAsADuplicateOnlyWhenAsked(t *testing.T) {

@@ -145,6 +145,8 @@ type Board struct {
 	ig     Issues
 	// unlisted holds the issues of a previous run that never reached the board, by lowercase GHSA identifier.
 	unlisted map[string]github.Issue
+	// created holds the link of each issue this run created, by GHSA identifier.
+	created map[string]string
 }
 
 // issueMarker names the advisory of an issue, so an issue created by a run that failed to put it on the board is
@@ -233,7 +235,7 @@ func Open(ctx context.Context, gh GitHub, ig Issues, project, issues, advisories
 			return nil, errors.New("the issues repository must be private")
 		}
 	}
-	b := &Board{gh: gh, org: org, number: number, ids: map[string]int64{}, options: map[string]map[string]string{}, items: map[string]*item{}, issues: issues, ig: ig}
+	b := &Board{gh: gh, org: org, number: number, ids: map[string]int64{}, options: map[string]map[string]string{}, items: map[string]*item{}, issues: issues, ig: ig, created: map[string]string{}}
 	fields, err := gh.ListProjectFields(ctx, org, number)
 	if err != nil {
 		return nil, err
@@ -435,6 +437,7 @@ func (b *Board) put(ctx context.Context, a github.Advisory, priority string, t *
 				return err
 			}
 			b.unlisted[key] = issue
+			b.created[a.GHSAID] = issue.HTMLURL
 		}
 		added, err := b.ig.AddProjectIssue(ctx, b.org, b.number, issue.ID)
 		if err != nil {
@@ -687,6 +690,19 @@ func (b *Board) CloseDuplicates(ctx context.Context, gh Advisories, repo string,
 		}
 		if err := b.ig.CommentIssue(ctx, b.issues, it.issue, note+"."); err != nil {
 			errs = append(errs, fmt.Errorf("noting the close of %s on its issue: %w", a.GHSAID, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// LinkIssues tells each advisory whose issue this run created where the maintainers track it. An issue found
+// again from a failed run is left out, since that run may have linked it already.
+func (b *Board) LinkIssues(ctx context.Context, gh Advisories, repo string) error {
+	var errs []error
+	for ghsa, link := range b.created {
+		if err := gh.PostComment(ctx, repo, ghsa, fmt.Sprintf("Tracked in %s.", link)); err != nil {
+			errs = append(errs, fmt.Errorf("linking the issue of %s: %w", ghsa, err))
 		}
 	}
 
