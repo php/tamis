@@ -23,7 +23,7 @@ go test ./internal/report -run '^$' -fuzz '^FuzzText$' -fuzztime 60s
 
 The provider protocol filter is fuzzed in harness, with its model proxy.
 
-On each push, CI checks formatting and `go mod tidy`, then runs `go vet`, `staticcheck`, `govulncheck`, `zizmor` on the workflows and the action, the tests, the three fuzz targets and the Docker isolation tests of both agent images. Make both isolation jobs required release checks.
+On each push, CI checks formatting and `go mod tidy`, then runs `go vet`, `staticcheck`, `govulncheck`, `zizmor` on the workflows and the action, the tests on Linux, macOS and Windows, the three fuzz targets and the Docker isolation tests of both agent images. Make both isolation jobs required release checks.
 
 ## Isolation tests
 
