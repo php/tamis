@@ -12,10 +12,7 @@ import (
 	"strings"
 )
 
-const (
-	maxFileLines = 400
-	maxGrepLines = 200
-)
+const maxFileLines = 400
 
 type Repo struct {
 	Dir     string
@@ -31,7 +28,7 @@ var errNotTracked = errors.New("not a file tracked by git")
 
 // ReadFile returns numbered lines of a tracked file.
 func (r Repo) ReadFile(path string, start, end int) (string, error) {
-	if !r.tracked(path) {
+	if !r.Exists(path) {
 		return "", errNotTracked
 	}
 
@@ -67,13 +64,9 @@ func (r Repo) ReadFile(path string, start, end int) (string, error) {
 	return b.String(), sc.Err()
 }
 
-// Exists reports whether path is a tracked file or a directory holding tracked files.
+// Exists reports whether path is a tracked file or a directory holding tracked files. It keeps the model on the
+// repository content: untracked files include .git and whatever other steps wrote.
 func (r Repo) Exists(path string) bool {
-	return r.tracked(path)
-}
-
-// tracked keeps the model on the repository content: untracked files include .git and whatever other steps wrote.
-func (r Repo) tracked(path string) bool {
 	if path == "" {
 		return false
 	}
@@ -92,24 +85,6 @@ func (r Repo) Files() ([]string, error) {
 	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
 }
 
-// Grep runs an extended regexp search over tracked files, path narrows it when set.
-func (r Repo) Grep(pattern, path string) (string, error) {
-	args := []string{"grep", "-n", "-I", "-E", "-e", pattern}
-	if path != "" {
-		args = append(args, "--", path)
-	}
-
-	out, err := r.git(args...)
-	if isNoMatch(err) {
-		return "no match", nil
-	}
-	if err != nil {
-		return "", err
-	}
-
-	return truncateLines(out, maxGrepLines), nil
-}
-
 // HasSymbol reports whether symbol appears as a whole word in path, or anywhere when path is empty.
 func (r Repo) HasSymbol(path, symbol string) (bool, error) {
 	args := []string{"grep", "-q", "-F", "-w", "-e", symbol}
@@ -123,18 +98,6 @@ func (r Repo) HasSymbol(path, symbol string) (bool, error) {
 	}
 
 	return err == nil, err
-}
-
-func (r Repo) Log(path, grep string) (string, error) {
-	args := []string{"log", "-n", "30", "--date=short", "--format=%h %ad %s"}
-	if grep != "" {
-		args = append(args, "--regexp-ignore-case", "--grep="+grep)
-	}
-	if path != "" {
-		args = append(args, "--", path)
-	}
-
-	return r.git(args...)
 }
 
 // Head returns the checked-out commit and its branch, empty when HEAD is detached.
@@ -201,13 +164,4 @@ func isNoMatch(err error) bool {
 	var exit *exec.ExitError
 
 	return errors.As(err, &exit) && exit.ExitCode() == 1
-}
-
-func truncateLines(s string, n int) string {
-	lines := strings.SplitAfter(s, "\n")
-	if len(lines) <= n {
-		return s
-	}
-
-	return strings.Join(lines[:n], "") + fmt.Sprintf("... %d more lines, narrow the search\n", len(lines)-n)
 }

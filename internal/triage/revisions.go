@@ -1,6 +1,7 @@
 package triage
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,12 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/php/tamis/internal/board"
-	"github.com/php/tamis/internal/engine"
 	"github.com/php/tamis/internal/github"
 	"github.com/php/tamis/internal/repo"
 	"github.com/php/tamis/internal/report"
@@ -35,21 +34,13 @@ func advisoryRevision(a github.Advisory, comments []github.Comment, login string
 			input.Comments = append(input.Comments, c)
 		}
 	}
-	slices.SortFunc(input.Comments, func(a, b github.Comment) int {
-		if a.ID < b.ID {
-			return -1
-		}
-		if a.ID > b.ID {
-			return 1
-		}
-		return 0
-	})
+	slices.SortFunc(input.Comments, func(a, b github.Comment) int { return cmp.Compare(a.ID, b.ID) })
 	data, _ := json.Marshal(input)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
-func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, eng engine.Engine, b *board.Board, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
+func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, b *board.Board, a github.Advisory, all []github.Advisory, comments []github.Comment, login, revision string, final bool, sourceDir string, log *slog.Logger) (bool, error) {
 	var comparisonErr error
 	var others []github.Advisory
 	byID := map[string]github.Advisory{}
@@ -66,47 +57,44 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			input.Description += "\n\nAdditional report comment:\n" + c.Body
 		}
 	}
-	var r report.Report
-	var sources, privateNote string
-	for i, reference := range cfg.References {
-		log.Info("preparing the source", "source", reference)
+	reference := cfg.References[0]
+	path := filepath.Join(sourceDir, "analysed")
+	if _, err := os.Stat(path); err != nil {
+		log.Info("copying the analysed source", "source", reference)
 		start := time.Now()
-		path := filepath.Join(sourceDir, strconv.Itoa(i))
-		if _, err := os.Stat(path); err != nil {
-			prepare := worktree
-			if i == 0 {
-				log.Info("copying the analysed source", "source", reference)
-				prepare = sandbox.SnapshotSource
-			}
-			if err := prepare(ctx, cfg.RepoPath, path, reference); err != nil {
-				_ = os.RemoveAll(path)
-				return false, err
-			}
+		if err := sandbox.SnapshotSource(ctx, cfg.RepoPath, path, reference); err != nil {
+			_ = os.RemoveAll(path)
+			return false, err
 		}
 		log.Info("source ready", "source", reference, "duration", time.Since(start).Round(time.Second))
-		code := repo.Repo{Dir: path, Context: ctx}
-		commit, err := code.Commit()
+	}
+	code := repo.Repo{Dir: path, Context: ctx}
+	commit, err := code.Commit()
+	if err != nil {
+		return false, err
+	}
+	sources := fmt.Sprintf("Source: `%s` at `%s`.\n", reference, commit)
+	for _, ref := range cfg.References[1:] {
+		out, err := exec.CommandContext(ctx, "git", "-C", cfg.RepoPath, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}").Output()
 		if err != nil {
-			return false, err
+			return false, errors.New("resolving a configured source reference")
 		}
-		sources += fmt.Sprintf("Source: `%s` at `%s`.\n", reference, commit)
-		if i > 0 {
-			continue
-		}
-		local := cfg
-		local.RepoPath = path
-		if r, err = triage(ctx, local, gh, reader, input, log); err != nil {
-			return false, err
-		}
-		r.Branch, r.CreatedAt = reference, a.CreatedAt
-		r.Located = verifiedClues(code, r).Location.Path != ""
-		// Bundled code is named from the faulty statement, so an unlocated one names nothing.
-		if !r.Located {
-			r.Upstream = ""
-		}
-		if r.Incomplete != nil {
-			continue
-		}
+		sources += fmt.Sprintf("Source: `%s` at `%s`.\n", ref, strings.TrimSpace(string(out)))
+	}
+	local := cfg
+	local.RepoPath = path
+	r, err := triage(ctx, local, gh, reader, input, log)
+	if err != nil {
+		return false, err
+	}
+	r.Branch, r.CreatedAt = reference, a.CreatedAt
+	r.Located = verifiedClues(code, r).Location.Path != ""
+	// Bundled code is named from the faulty statement, so an unlocated one names nothing.
+	if !r.Located {
+		r.Upstream = ""
+	}
+	var privateNote string
+	if r.Incomplete == nil {
 		// A failed duplicate search leaves the duplicates out of the triage rather than blocking it.
 		duplicates, err := findDuplicates(ctx, path, reader, r, input, others, log)
 		if err != nil {
@@ -117,7 +105,7 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 			if err := (report.Checker{Advisories: byID}).Verify(ctx, &matches); err != nil {
 				return false, err
 			}
-			if err := confirmPrivateDuplicates(ctx, path, reader, eng, r, input, matches.Duplicates, byID, log); err != nil {
+			if err := confirmPrivateDuplicates(ctx, path, reader, r, input, matches.Duplicates, byID, log); err != nil {
 				comparisonErr = errors.Join(comparisonErr, err)
 				privateNote += "\nPrivate exact duplicate confirmation could not complete.\n"
 			}
@@ -161,20 +149,6 @@ func triageRevisions(ctx context.Context, cfg Config, gh GitHub, reader Reader, 
 	}
 
 	return true, comparisonErr
-}
-
-// worktree checks a reference out next to the repository and shares its objects: only tamis reads it, the
-// agent never does.
-func worktree(ctx context.Context, repoPath, target, reference string) error {
-	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--end-of-options", reference+"^{commit}").Output()
-	if err != nil {
-		return errors.New("resolving a configured source reference")
-	}
-	if err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "add", "--quiet", "--detach", "--", target, strings.TrimSpace(string(out))).Run(); err != nil {
-		return errors.New("checking out a configured source reference")
-	}
-
-	return nil
 }
 
 // reportBase names the private files of one advisory revision, without the GHSA identifier.

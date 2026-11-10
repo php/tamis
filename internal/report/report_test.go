@@ -202,7 +202,6 @@ func TestRender(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		Marker,
 		"> Suggestions generated with an LLM. They help sort the report and do not replace a maintainer's review.",
 		"Heap overflow claimed, cc @\u200bsomeone\n",
 		"| Advisory | Status | Confidence |",

@@ -9,7 +9,7 @@ go build ./cmd/tamis
 go test -race ./...
 ```
 
-Three fuzz targets cover the comment escaper, the duplicate-search clues and file reading:
+Three fuzz targets cover the text escaper, the duplicate-search clues and file reading:
 
 | Target | Package |
 |---|---|
@@ -38,7 +38,7 @@ Repeat with `claude`. The tests use fake model servers, check direct host, Inter
 
 ## Evals
 
-The evals run the real triage, sandboxed agent and model included, on made-up reports about `libmini`, a small C library in `internal/triage/testdata/evals`. Each scenario checks the location, the CWE, the policy exclusions and the duplicates the models propose, and that a prompt injection does not leak another advisory into the comment. They spend real model requests, so they only run with the `evals` tag, Docker and a key:
+The evals run the real triage, sandboxed agent and model included, on made-up reports about `libmini`, a small C library in `internal/triage/testdata/evals`. Each scenario checks the location, the CWE, the policy exclusions and the duplicates the models propose, that a prompt injection does not leak another advisory into the triage, and that an unpublished exact duplicate reaches the board item once its confirmation passed. They spend real model requests, so they only run with the `evals` tag, Docker and a key:
 
 ```bash
 ENGINE=claude LLM_API_KEY="$ANTHROPIC_API_KEY" go test -tags evals -count=1 -timeout 1h -run TestEvals ./internal/triage
@@ -93,8 +93,6 @@ tamis writes the board item for real. It skips an advisory whose item already ho
 | `internal/sandbox` | The agent container and the model proxy that keeps the key on the host, through harness |
 | `internal/budget` | Request and byte budgets shared by every agent and comparator of a run |
 | `internal/usage` | Requests and tokens spent per advisory, for the log |
-| `internal/engine` | The in-process model loop of the exact duplicate confirmation |
-| `internal/tools` | The read-only tools of the exact duplicate confirmation |
 | `internal/report` | Report schema, verification and rendering |
 | `internal/repo` | Read-only access to tracked files |
 | `internal/github` | GitHub REST client |
