@@ -10,11 +10,16 @@ ARG CLAUDE_ARM64_LOCK=v2.1.319@sha256:2e7348ffc96d52ccb20e34c81240ebc92505edc84d
 ARG CODEX_AMD64_LOCK=rust-v0.167.0@sha256:3bbf75e83de6b58aed28f2cf6e33ad423ec31fd4700a1457b94be557ea5a7c6e
 ARG CODEX_ARM64_LOCK=rust-v0.167.0@sha256:0de261ecf1e7f3028a7952f03fca2093f749277d38590b78bb32f8567756bbb7
 ARG HARNESS_VERSION=v0.1.21
+ARG HARNESS_REPLACE=github.com/alexandre-daubois/harness@v0.1.12-0.20261116083615-135e53b30cb0
 
-FROM golang:1.27.3-trixie@sha256:af1bfc2614ebb1dbd31af514b78740fd678850e76498762b425ecee4c5c6ea80 AS proxy
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS proxy
 ARG HARNESS_VERSION
+ARG HARNESS_REPLACE
+WORKDIR /build
 # The egress proxy runs beside every untrusted agent container.
-RUN GOBIN=/out CGO_ENABLED=0 go install -trimpath github.com/alpha-omega-security/harness/cmd/harness-proxy@${HARNESS_VERSION}
+RUN go mod init tamis-agent-proxy \
+ && go mod edit -require=github.com/alpha-omega-security/harness@${HARNESS_VERSION} -replace=github.com/alpha-omega-security/harness=${HARNESS_REPLACE} \
+ && GOBIN=/out CGO_ENABLED=0 go install -mod=mod -trimpath github.com/alpha-omega-security/harness/cmd/harness-proxy
 
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS base
 RUN apt-get update \

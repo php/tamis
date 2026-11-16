@@ -31,9 +31,6 @@ const (
 	srcDir = "src"
 )
 
-// allow is the only external host the agent may reach: public issue and pull request search.
-var allow = []string{"api.github.com"}
-
 type backend struct {
 	harness  string
 	provider modelproxy.Provider
@@ -81,11 +78,13 @@ type Reader struct {
 type Request struct {
 	// RepoPath is a snapshot from SnapshotSource, mounted read-only and shared by the runs of one source.
 	RepoPath string
-	System   string
-	Prompt   string
-	Report   string
-	Schema   []byte
-	Validate func(json.RawMessage) error
+	// Repository scopes the online reader's public GitHub API.
+	Repository string
+	System     string
+	Prompt     string
+	Report     string
+	Schema     []byte
+	Validate   func(json.RawMessage) error
 	// Offline cuts the agent off from GitHub, leaving it the model only.
 	Offline bool
 	// Files are written in the workspace, under their relative path, next to the report.
@@ -163,15 +162,21 @@ func (r *Reader) Read(ctx context.Context, req Request) (json.RawMessage, error)
 		spent := revoke()
 		usage.Add(ctx, usage.Usage{Requests: int64(spent.Requests), InputTokens: int64(spent.InputTokens), OutputTokens: int64(spent.OutputTokens)})
 	}()
-	hosts := allow
-	if req.Offline {
-		hosts = nil
-	}
 	env, err := r.writeConfig(state)
 	if err != nil {
 		return nil, err
 	}
-	scope, err := r.runner(state, source, token, hosts, env).Open(ctx, &agent{Harness: r.harness})
+	var publicPort string
+	if !req.Offline {
+		base, port, close, err := serveGitHub(ctx, req.Repository)
+		if err != nil {
+			return nil, err
+		}
+		defer close()
+		publicPort = port
+		env = append(env, "TAMIS_GITHUB_API="+base)
+	}
+	scope, err := r.runner(state, source, token, publicPort, env).Open(ctx, &agent{Harness: r.harness})
 	if err != nil {
 		return nil, err
 	}
@@ -269,16 +274,16 @@ func SnapshotSource(ctx context.Context, repoPath, target, reference string) err
 		return errors.New("resolving a configured source reference")
 	}
 	commit := strings.TrimSpace(string(out))
-	if err := exec.CommandContext(ctx, "git", "clone", "--no-local", "--no-hardlinks", "--no-tags", "--single-branch", "--quiet", "--", abs, target).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "git", "init", "--quiet", "--", target).Run(); err != nil {
 		return errors.New("snapshotting the source repository")
 	}
-	if err := exec.CommandContext(ctx, "git", "-C", target, "fetch", "--no-tags", "--quiet", "--", abs, commit).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "git", "-C", target, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet", "--", abs, commit).Run(); err != nil {
 		return errors.New("snapshotting the configured source reference")
 	}
 	if err := exec.CommandContext(ctx, "git", "-C", target, "checkout", "--quiet", "--detach", commit, "--").Run(); err != nil {
 		return errors.New("checking out the configured source reference")
 	}
-	// The generated remote contains the host path but is not needed by the read-only agent.
+	// The read-only agent needs no local repository configuration.
 	if err := os.WriteFile(filepath.Join(target, ".git", "config"), nil, 0o600); err != nil {
 		return err
 	}

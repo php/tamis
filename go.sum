@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/alpha-omega-security/harness v0.1.21 h1:iIpAbfuNSLmnyPmXqJHO4M2L/OVzfFQhZVOoSVLrabo=
-github.com/alpha-omega-security/harness v0.1.21/go.mod h1:rlD5PLSKLYxoGsx9CigCgZ87/zDCuMVKPVEFX0UZqpQ=
+github.com/alexandre-daubois/harness v0.1.12-0.20261116083615-135e53b30cb0 h1:kgJOqG/uBEpSnAk4pDpm4iRDC0LPyNf5xLk0vAwIuzw=
+github.com/alexandre-daubois/harness v0.1.12-0.20261116083615-135e53b30cb0/go.mod h1:FVFnHq16HABtUOrQbOA1fbBoIfIsowI+B4ZR4fl1MuE=
 github.com/bitfield/gotestdox v0.2.3 h1:H8Wy07kYacr3YSF5aJON/m9ASE+PGKOSufXkTjqQGb8=
 github.com/bitfield/gotestdox v0.2.3/go.mod h1:bq/HemlNNqEvjOzy7brevVhzZD8WTGFDGq59DOIsHqI=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=

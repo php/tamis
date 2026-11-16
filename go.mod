@@ -1,6 +1,6 @@
 module github.com/php/tamis
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/alpha-omega-security/harness v0.1.21
@@ -40,3 +40,5 @@ tool (
 	gotest.tools/gotestsum
 	honnef.co/go/tools/cmd/staticcheck
 )
+
+replace github.com/alpha-omega-security/harness => github.com/alexandre-daubois/harness v0.1.12-0.20261116083615-135e53b30cb0

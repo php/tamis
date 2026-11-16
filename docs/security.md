@@ -7,8 +7,8 @@ tamis reads text from an outside reporter, holds access to embargoed advisories 
 | Threat | Mitigation |
 |---|---|
 | A prompt injection makes the agent leak other advisories | See [Duplicate search isolation](#duplicate-search-isolation). |
-| The agent leaks secrets | The container holds no secret. The model key stays on the runner, the GitHub token never enters the container, and the container gets a clean single-branch clone with an empty `.git/config`. |
-| The agent exfiltrates data over the network | The container sits on an isolated internal network and only reaches a private egress sidecar. The model proxy pins the model and rejects remote URLs, remote MCP servers, hosted tools, stored conversations and background calls. |
+| The agent leaks secrets | The container holds no secret. The model key stays on the runner, the GitHub token never enters the container, and the container gets only the selected commit and its history, with an empty `.git/config`. |
+| The agent exfiltrates data over the network | The container sits on an isolated internal network and only reaches a private egress sidecar. Public GitHub access is a read-only service with no credentials or redirects. The model proxy pins the model and rejects remote URLs, remote MCP servers, hosted tools, stored conversations and background calls. |
 | The triage loads a remote image carrying data, or pings people | tamis escapes all model text: no links, images, HTML, entities or mentions. |
 | A report changes during triage | tamis hashes the title, description, metadata and non-bot comments, reads them again before publication and publishes nothing when the revision changed. It does not triage a completed advisory again after a later edit. |
 | A reporter drains the model budget | Branches, agents and comparators share the advisory and run budgets. tamis bounds requests, bytes, output tokens and runtime, and one known reporter cannot take a whole run. A provider spending ceiling bounds costs across runs. |
@@ -34,11 +34,15 @@ tamis itself never logs report text, the identifiers of other advisories or prov
 The agent runs through [harness](https://github.com/alpha-omega-security/harness), the isolation layer of [scrutineer](https://github.com/alpha-omega-security/scrutineer):
 
 - a throwaway container per advisory, with a read-only root filesystem, all capabilities dropped and no new privileges,
-- one single-branch clone of the analysed branch per execution, mounted read-only into each agent run, with no untracked files and an empty `.git/config`, while tamis only reads the commit of the other branches,
-- an internal bridge network with both gateway modes set to `isolated` and IPv6 disabled, whose only peer is an authenticated egress proxy that allows the model proxy and `api.github.com`,
+- one snapshot of the selected commit and its ancestors per execution, mounted read-only into each agent run, with no other branches, untracked files or repository configuration,
+- an internal bridge network with both gateway modes set to `isolated` and IPv6 disabled, whose only peer is an authenticated egress proxy that allows the model proxy and, for the reader only, a public GitHub read service,
 - a read-only workspace except for `report.json`, with memory, CPU, process and file-size limits,
 - an image with only the agent CLI, git, curl, ripgrep and `harness-proxy`, each download checked against a pinned checksum,
 - that image pinned by digest in each release, and checked by the action against its build attestation before use, like the tamis binary of a release.
+
+The public GitHub service accepts issue and pull-request searches and selected issue, pull-request and commit reads for the source repository. It preserves pagination and PR diff/patch formats. It does not forward agent credentials, accept writes or follow redirects; offline duplicate agents cannot reach it.
+
+Host-side diagnostics are bounded too: harness retains the last 64 KiB of stderr, drains JSONL records larger than 16 MiB and limits refusal-log traversal before constructing the log text. tamis keeps only the last 16 error messages, up to 4 KiB each.
 
 ## The model proxy
 

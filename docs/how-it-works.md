@@ -16,7 +16,7 @@ An agent, Claude Code or Codex, investigates the report in a throwaway container
 
 - `/work/report.md` holds the report and its non-bot followup comments,
 - `/work/src` holds the selected source branch, read-only and with its history,
-- the agent can search public issues and pull requests through the GitHub API,
+- the agent can search public issues and pull requests through a read-only GitHub service,
 - it reads the security policy files when the repository has some,
 - it writes its findings to `/work/report.json` against a JSON schema, first as soon as it has an answer, then as it learns more.
 
