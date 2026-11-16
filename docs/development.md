@@ -1,6 +1,6 @@
 # Development
 
-You need Go 1.27.3 and Docker.
+You need Go 1.27.4 and Docker.
 
 ## Build and test
 
@@ -57,6 +57,8 @@ docker build --target claude -t tamis-agent:claude docker/agent
 When that directory changes on `main`, the `Agent image` workflow publishes both images to `ghcr.io/php/tamis-agent` with a build attestation. It then opens a pull request that updates the digests in [`internal/sandbox/images.json`](../internal/sandbox/images.json). tamis only runs the images pinned there, so new images reach users once that pull request lands in a release.
 
 To bump an agent CLI, update its tag and the sha256 of each architecture's asset together in the Dockerfile. The workflow needs "Allow GitHub Actions to create and approve pull requests" in the repository settings.
+
+Until harness publishes the sandbox resource-limit fixes, `go.mod` and `HARNESS_REPLACE` in the Dockerfile pin the same reviewed fork commit. Remove both replacements when upgrading to the upstream release that contains them.
 
 ## Releases
 

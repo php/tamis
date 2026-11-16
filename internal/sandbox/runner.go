@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"strings"
+
 	"github.com/alpha-omega-security/harness"
 	"github.com/alpha-omega-security/harness/container"
 )
@@ -9,22 +11,29 @@ type agent struct {
 	harness.Harness
 }
 
-// EgressHosts is empty so the egress proxy allows the model proxy and the request's hosts only, not the
-// provider's own API.
+// EgressHosts is empty so only the host services explicitly granted to this run are reachable.
 func (*agent) EgressHosts() []string { return nil }
 
 // failures keeps the errors a run reports among its events. Codex exec --json reports why it stopped only there.
 type failures []string
 
 func (f *failures) keep(e harness.Event) {
-	if e.Kind == harness.KindError {
-		*f = append(*f, e.Text)
+	if e.Kind != harness.KindError || e.Text == "" {
+		return
 	}
+	const maxMessages, maxBytes = 16, 4096
+	if len(*f) == maxMessages {
+		*f = (*f)[:copy(*f, (*f)[1:])]
+	}
+	*f = append(*f, strings.Clone(strings.ToValidUTF8(e.Text[max(0, len(e.Text)-maxBytes):], "")))
 }
 
-// runner keeps the agent on a network whose only way out is the egress proxy, allowing the model proxy and
-// hosts.
-func (r *Reader) runner(state, source, token string, hosts, env []string) container.Runner {
+// runner grants the public-read service only to the online reader.
+func (r *Reader) runner(state, source, token, publicPort string, env []string) container.Runner {
+	ports := append([]string(nil), r.server.HostPorts...)
+	if publicPort != "" {
+		ports = append(ports, publicPort)
+	}
 	return container.Runner{
 		Runtime:  r.runtime,
 		Image:    r.image,
@@ -36,7 +45,7 @@ func (r *Reader) runner(state, source, token string, hosts, env []string) contai
 		ProcessEnv:        []string{r.backend.keyEnv + "=" + token},
 		Hardened:          true,
 		IsolateHost:       true,
-		Sidecar:           container.SidecarConfig{Allow: hosts, APIPort: r.server.APIPort, HostPorts: r.server.HostPorts},
+		Sidecar:           container.SidecarConfig{APIPort: r.server.APIPort, HostPorts: ports},
 		ReadOnlyWorkspace: true,
 		Memory:            "2g",
 		CPUs:              "2",

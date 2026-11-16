@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,10 +62,16 @@ func TestSnapshotSourceUsesTheConfiguredBranch(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(source, "new.txt"), []byte("HEAD-only"), 0o600))
 	git(t, source, "add", "--", "new.txt")
 	git(t, source, "commit", "--quiet", "--no-gpg-sign", "-m", "new branch code")
+	newCommit, err := exec.Command("git", "-C", source, "rev-parse", "--verify", "HEAD").Output()
+	require.NoError(t, err)
 	target := filepath.Join(t.TempDir(), "src")
 	require.NoError(t, SnapshotSource(t.Context(), source, target, "stable"))
-	_, err := os.Stat(filepath.Join(target, "new.txt"))
+	_, err = os.Stat(filepath.Join(target, "new.txt"))
 	require.ErrorIs(t, err, os.ErrNotExist, "HEAD code reached the stable snapshot")
+	require.Error(t, exec.Command("git", "-C", target, "cat-file", "-e", strings.TrimSpace(string(newCommit))).Run(), "the unselected commit reached the object database")
+	refs, err := exec.Command("git", "-C", target, "for-each-ref", "--format=%(refname)").Output()
+	require.NoError(t, err)
+	require.Empty(t, refs, "the snapshot retains another branch")
 	for _, ref := range []string{"missing", "--upload-pack=malicious"} {
 		require.Error(t, SnapshotSource(t.Context(), source, filepath.Join(t.TempDir(), "src"), ref), "invalid reference accepted")
 	}
@@ -105,12 +112,12 @@ func TestAgentRunsIsolatedWithLimitedResources(t *testing.T) {
 	require.NoError(t, err)
 	reader := &Reader{backend: backends["claude"], harness: h, image: "agent", server: &modelproxy.Server{APIPort: "1234"}}
 
-	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", allow, nil)
+	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", "5678", nil)
 
 	assert.True(t, runner.Hardened, "the agent shares a network with other containers")
 	assert.True(t, runner.IsolateHost, "the agent can reach host services")
 	assert.True(t, runner.ReadOnlyWorkspace, "the agent can change its own instructions")
-	assert.Equal(t, container.SidecarConfig{Allow: allow, APIPort: "1234"}, runner.Sidecar)
+	assert.Equal(t, container.SidecarConfig{APIPort: "1234", HostPorts: []string{"5678"}}, runner.Sidecar)
 	assert.Equal(t, []container.Mount{{Host: "/host/snapshot", Container: "/work/src", ReadOnly: true}}, runner.Mounts)
 	assert.Equal(t, []any{"2g", "2", 256, int64(64 << 20)}, []any{runner.Memory, runner.CPUs, runner.PIDsLimit, runner.FileSizeLimit})
 }
@@ -120,9 +127,10 @@ func TestOfflineAgentReachesOnlyTheModelProxy(t *testing.T) {
 	require.NoError(t, err)
 	reader := &Reader{backend: backends["claude"], harness: h, server: &modelproxy.Server{APIPort: "1234"}}
 
-	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", nil, nil)
+	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", "", nil)
 
 	assert.Empty(t, runner.Sidecar.Allow)
+	assert.Empty(t, runner.Sidecar.HostPorts)
 	assert.Empty(t, (&agent{Harness: h}).EgressHosts(), "the agent can reach the provider around the model proxy")
 }
 
@@ -131,12 +139,13 @@ func TestAccessTokenContainerGetsNoAmbientAPIKey(t *testing.T) {
 	require.NoError(t, err)
 	reader := &Reader{backend: backends["codex-token"], harness: h, server: &modelproxy.Server{HostPorts: []string{"1234"}}}
 
-	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", allow, nil)
+	runner := reader.runner("/host/state", "/host/snapshot", "proxy-token", "5678", nil)
 
 	assert.Contains(t, runner.OmitEnv, "CODEX_API_KEY", "the ambient API key reaches the container")
 	assert.Contains(t, runner.Env, "CODEX_ACCESS_TOKEN", "the access token key is not injected")
 	assert.Equal(t, []string{"CODEX_ACCESS_TOKEN=proxy-token"}, runner.ProcessEnv)
-	assert.Equal(t, container.SidecarConfig{Allow: allow, HostPorts: []string{"1234"}}, runner.Sidecar)
+	assert.Equal(t, container.SidecarConfig{HostPorts: []string{"1234", "5678"}}, runner.Sidecar)
+	assert.Equal(t, []string{"1234"}, reader.server.HostPorts)
 }
 
 func TestOnlyDockerCanRunTheAgent(t *testing.T) {
@@ -144,7 +153,7 @@ func TestOnlyDockerCanRunTheAgent(t *testing.T) {
 	require.NoError(t, err)
 	reader := &Reader{backend: backends["claude"], harness: h, runtime: container.Runtime{Bin: "podman"}, image: "agent", server: &modelproxy.Server{APIPort: "1234"}}
 
-	_, err = reader.runner(t.TempDir(), t.TempDir(), "proxy-token", allow, nil).Open(t.Context(), &agent{Harness: h})
+	_, err = reader.runner(t.TempDir(), t.TempDir(), "proxy-token", "", nil).Open(t.Context(), &agent{Harness: h})
 
 	require.Error(t, err, "an unsupported runtime must fail closed")
 }
@@ -252,6 +261,12 @@ func TestAgentImagePinsAgree(t *testing.T) {
 	require.Len(t, proxy, 2)
 	require.Len(t, module, 2)
 	require.Equal(t, module[1], proxy[1], "harness-proxy in the agent image must match the harness module")
+
+	proxyReplacement := regexp.MustCompile(`(?m)^ARG HARNESS_REPLACE=(\S+)$`).FindStringSubmatch(string(dockerfile))
+	moduleReplacement := regexp.MustCompile(`(?m)^replace github\.com/alpha-omega-security/harness => (\S+) (\S+)$`).FindStringSubmatch(string(gomod))
+	require.Len(t, proxyReplacement, 2)
+	require.Len(t, moduleReplacement, 3)
+	require.Equal(t, moduleReplacement[1]+"@"+moduleReplacement[2], proxyReplacement[1], "harness-proxy must use the same patched source as tamis")
 }
 
 func TestFailuresKeepTheErrorsOfACodexRun(t *testing.T) {
@@ -279,6 +294,18 @@ func TestFailuresKeepNothingFromASuccessfulRun(t *testing.T) {
 	h.ParseStream(strings.NewReader(`{"type":"item.completed","item":{"type":"agent_message","text":"report content"}}`+"\n"+`{"type":"turn.completed","usage":{"input_tokens":1}}`), failed.keep)
 
 	require.Empty(t, failed)
+}
+
+func TestFailuresBoundTheLastDiagnostics(t *testing.T) {
+	var failed failures
+	for i := range 32 {
+		failed.keep(harness.Event{Kind: harness.KindError, Text: strings.Repeat("x", 8192) + strconv.Itoa(i)})
+	}
+	require.Len(t, failed, 16)
+	for _, message := range failed {
+		require.LessOrEqual(t, len(message), 4096)
+	}
+	require.True(t, strings.HasSuffix(failed[len(failed)-1], "31"))
 }
 
 func TestOutcomeKeepsAValidReportFromAFailedRun(t *testing.T) {

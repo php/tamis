@@ -47,7 +47,7 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 	require.NoError(t, err)
 	reader := &Reader{backend: backends["claude"], harness: h, runtime: runtime, image: image, server: &modelproxy.Server{APIPort: modelPort}}
 	env := []string{"MODEL_URL=http://" + egress.HostGatewayAlias + ":" + modelPort, "SECRET_URL=http://" + net.JoinHostPort(hostIP, secretPort), "PROXIED_SECRET_URL=http://" + egress.HostGatewayAlias + ":" + secretPort}
-	scope, err := reader.runner(t.TempDir(), t.TempDir(), "proxy-token", allow, env).Open(ctx, &agent{Harness: h})
+	scope, err := reader.runner(t.TempDir(), t.TempDir(), "proxy-token", "", env).Open(ctx, &agent{Harness: h})
 	require.NoError(t, err)
 	t.Cleanup(func() { scope.Close(nil) })
 
@@ -62,6 +62,53 @@ func TestIsolatedNetworkReachesTheModelButNotOtherHostServices(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(workspace, srcDir), 0o700))
 	out, err = scope.RunCommand(ctx, harness.Job{Workspace: workspace, OutputFile: outputFile}, container.Command{Args: []string{"sh", "-c", `export http_proxy="$HTTP_PROXY" && test "$(curl -fsS --connect-timeout 5 "$MODEL_URL")" = model && ! curl -fsS --noproxy '*' --connect-timeout 2 "$SECRET_URL" && ! curl -fsS --connect-timeout 2 "$PROXIED_SECRET_URL" && ! curl -fsS --noproxy '*' --connect-timeout 2 'https://1.1.1.1' && ! curl -gfsS --noproxy '*' --connect-timeout 2 'https://[2606:4700:4700::1111]' && ! getent hosts example.com`}})
 	require.NoError(t, err, "isolation probe: %s", strings.TrimSpace(string(out)))
+}
+
+func TestReaderOnlyReachesReadOnlyGitHubAPI(t *testing.T) {
+	image := os.Getenv("TAMIS_TEST_IMAGE")
+	require.NotEmpty(t, image)
+	var calls atomic.Int32
+	upstream, upstreamPort := testServerHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		assertMethod := r.Method == http.MethodGet && r.URL.Path == "/search/issues" && r.Header.Get("Authorization") == ""
+		if !assertMethod {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		_, _ = io.WriteString(w, "public-data")
+	})
+	t.Cleanup(func() { _ = upstream.Close() })
+	api, err := newGitHubAPI("php/tamis")
+	require.NoError(t, err)
+	api.upstream = "http://127.0.0.1:" + upstreamPort
+	public, publicPort := testServerHandler(t, api.ServeHTTP)
+	t.Cleanup(func() { _ = public.Close() })
+	reader, err := New("claude", "model", "test-key", image)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	env := []string{"PUBLIC_URL=http://" + egress.HostGatewayAlias + ":" + publicPort + "/" + api.token}
+	for _, offline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("offline=%t", offline), func(t *testing.T) {
+			port := publicPort
+			if offline {
+				port = ""
+			}
+			scope, err := reader.runner(t.TempDir(), t.TempDir(), "proxy-token", port, env).Open(ctx, &agent{Harness: reader.harness})
+			require.NoError(t, err)
+			defer scope.Close(nil)
+			workspace := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(workspace, srcDir), 0o700))
+			probe := `test "$(curl --proxy "$HTTPS_PROXY" -fsS --max-time 5 "$PUBLIC_URL/search/issues?q=foo")" = public-data && ! curl --proxy "$HTTPS_PROXY" -fsS --max-time 5 -X POST "$PUBLIC_URL/repos/php/tamis/issues" && ! curl -fsS --max-time 5 https://api.github.com/gists`
+			if offline {
+				probe = `! curl --proxy "$HTTPS_PROXY" -fsS --max-time 5 "$PUBLIC_URL/search/issues?q=foo"`
+			}
+			out, err := scope.RunCommand(ctx, harness.Job{Workspace: workspace, OutputFile: outputFile}, container.Command{Args: []string{"sh", "-c", probe}})
+			require.NoError(t, err, "GitHub isolation probe: %s", out)
+		})
+	}
+	require.Equal(t, int32(1), calls.Load())
 }
 
 func TestClaudeCanReachTheFilteredModelProxy(t *testing.T) {
@@ -102,7 +149,7 @@ func testAgentCanReachTheFilteredModelProxy(t *testing.T, name, model, imageSuff
 	})
 	t.Cleanup(func() { _ = upstream.Close() })
 	reader := testReader(t, name, model, image, port)
-	_, readErr := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
+	_, readErr := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Repository: "php/tamis", Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: func(json.RawMessage) error { return nil }})
 	require.GreaterOrEqual(t, calls.Load(), int32(2), "the legitimate %s request was blocked before the model provider: %v", name, errors.Unwrap(readErr))
 	if name != "claude" {
 		require.Contains(t, first.Load(), `"effort":"medium"`, "Codex does not request medium reasoning")
@@ -174,7 +221,7 @@ func readWithCorrection(t *testing.T, image, corrected string) (json.RawMessage,
 		}
 		return nil
 	}
-	raw, err := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: validate})
+	raw, err := reader.Read(t.Context(), Request{RepoPath: gitRepo(t), Repository: "php/tamis", Prompt: "Answer", System: "System", Report: "Report", Schema: []byte(`{}`), Validate: validate})
 
 	return raw, seen, resumed, err
 }
