@@ -1,6 +1,6 @@
 # Development
 
-You need Go 1.27.3 and Docker.
+You need Go 1.27.4 and Docker.
 
 ## Build and test
 
