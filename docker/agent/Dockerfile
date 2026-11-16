@@ -5,13 +5,13 @@
 
 # Each release tag sits beside the digest of its asset, as in scrutineer's Dockerfile.runner, so a version
 # bump updates both and a mismatch fails sha256sum below.
-ARG CLAUDE_AMD64_LOCK=v2.1.319@sha256:8cf226393c8eca446d6ca60fa6bbe3fa7b5fa4de82a7b410d1edbd48689cd776
-ARG CLAUDE_ARM64_LOCK=v2.1.319@sha256:2e7348ffc96d52ccb20e34c81240ebc92505edc84d7bf29182d62c29bf6fa066
-ARG CODEX_AMD64_LOCK=rust-v0.167.0@sha256:3bbf75e83de6b58aed28f2cf6e33ad423ec31fd4700a1457b94be557ea5a7c6e
-ARG CODEX_ARM64_LOCK=rust-v0.167.0@sha256:0de261ecf1e7f3028a7952f03fca2093f749277d38590b78bb32f8567756bbb7
+ARG CLAUDE_AMD64_LOCK=v2.1.325@sha256:9686b0fb1eefbd7f2cc1f53f932516c29cd605e9d976223323a6c6e9a4c9c7fe
+ARG CLAUDE_ARM64_LOCK=v2.1.325@sha256:2abe2bea8b802190a303f335b0fd09f95eb775457e99df5a4778b09dfab6bbd6
+ARG CODEX_AMD64_LOCK=rust-v0.169.0@sha256:3b8ed091149cc63a59046b9f094bcfa21cdb4dda15ede441ce369bcee4a71ba0
+ARG CODEX_ARM64_LOCK=rust-v0.169.0@sha256:c8d0b4ab2a97c595b70b10412d36d0d5464dcef1e1d3246b073d48017cdf5a4f
 ARG HARNESS_VERSION=v0.1.21
 
-FROM golang:1.27.3-trixie@sha256:af1bfc2614ebb1dbd31af514b78740fd678850e76498762b425ecee4c5c6ea80 AS proxy
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS proxy
 ARG HARNESS_VERSION
 # The egress proxy runs beside every untrusted agent container.
 RUN GOBIN=/out CGO_ENABLED=0 go install -trimpath github.com/alpha-omega-security/harness/cmd/harness-proxy@${HARNESS_VERSION}
